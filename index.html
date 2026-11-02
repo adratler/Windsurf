@@ -91,6 +91,22 @@
   .sres{margin-top:10px;max-height:50vh;overflow:auto;display:flex;flex-direction:column;gap:6px}
   .sitem{text-align:left;border:1px solid var(--line);background:var(--soft);color:var(--ink);border-radius:10px;padding:9px 11px}
   .sitem span{display:block;font-size:12px;color:var(--muted);margin-top:2px}
+  .vtabs{display:flex;gap:6px;margin-top:10px}
+  .vtab{flex:1;max-width:170px;background:transparent;border:1px solid #ffffff33;color:var(--cream);border-radius:20px;padding:6px 10px;font-weight:600}
+  .vtab.on{background:var(--orange);border-color:var(--orange);color:#0a0a0a}
+  #mapview{display:flex;flex-direction:column;height:calc(100dvh - 150px);min-height:420px}
+  .wmlegend{display:flex;font-size:12px;font-weight:600;color:#fff}
+  .wmlegend span{flex:1;text-align:center;padding:3px 0;text-shadow:0 0 2px #0008}
+  .wmlegend .u{background:#333;flex:0 0 34px}
+  #wmwrap{position:relative;flex:1;min-height:0}
+  #wmap{position:absolute;inset:0;background:#aac}
+  #wmbg,#wmfx{position:absolute;left:0;top:0;pointer-events:none;transition:opacity .15s}
+  #wmbg{opacity:0}
+  #wmmsg{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:800;background:#000c;color:#fff;padding:6px 12px;border-radius:16px;font-size:13px;white-space:nowrap}
+  .wmbtn{position:absolute;right:12px;bottom:34px;z-index:800;width:44px;height:44px;border-radius:50%;border:none;background:#fff;color:#111;font-size:22px;box-shadow:0 2px 8px #0005}
+  .wmbar{user-select:none;-webkit-user-select:none;display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--card);border-top:1px solid var(--line)}
+  .wmmid{flex:1;text-align:center} #wmtime{font-weight:700;font-size:14px;text-transform:capitalize} #wmrange{width:100%}
+  .leaflet-popup-content .btn{font-size:13px}
   @media (max-width:560px){
     .now{grid-template-columns:1fr}
     .bigwind .num{font-size:40px}
@@ -120,8 +136,23 @@
       <label>Máximo <input type="number" id="maxw" min="10" max="60"> kn</label>
     </div>
   </div>
+  <nav class="vtabs wrap"><button class="vtab on" data-v="fc">Pronóstico</button><button class="vtab" data-v="map">Mapa</button></nav>
 </header>
 <div id="modal"><div class="box"></div></div>
+<section id="mapview" style="display:none">
+  <div class="wmlegend"><span class="u">kn</span><span style="background:#5b6fd6">0</span><span style="background:#4f97e0">5</span><span style="background:#3fc1d6">9</span><span style="background:#3dcf8e">13</span><span style="background:#8bd43b">17</span><span style="background:#e2d634">21</span><span style="background:#f2a531">25</span><span style="background:#ec5f34">30</span><span style="background:#d23468">36</span><span style="background:#9b2fb3">45</span></div>
+  <div id="wmwrap">
+    <div id="wmap"></div>
+    <canvas id="wmbg"></canvas><canvas id="wmfx"></canvas>
+    <div id="wmmsg" style="display:none"></div>
+    <button class="wmbtn" id="wmloc" title="Ir a mi ubicación" aria-label="Ir a mi ubicación">◎</button>
+  </div>
+  <div class="wmbar">
+    <button class="btn" id="wmprev">‹ −3h</button>
+    <div class="wmmid"><div id="wmtime">–</div><input type="range" id="wmrange" min="0" max="95" step="1" value="0"></div>
+    <button class="btn" id="wmnext">+3h ›</button>
+  </div>
+</section>
 <main class="wrap" id="app"><div class="loading">Cargando pronóstico…</div></main>
 
 <script>
@@ -146,7 +177,7 @@ const state = {
   model: store.get("model","best_match"),
   minW: store.get("minW",14),
   maxW: store.get("maxW",35),
-  day: 0, data:null
+  day: 0, data:null, view:"fc"
 };
 
 // ---------- helpers ----------
@@ -449,7 +480,7 @@ function addSpot(sp){
   customSpots = customSpots.filter(s=>s.id!==sp.id); customSpots.push(sp); store.set("custom",customSpots);
   selectSpot(sp.id);
 }
-function selectSpot(id){ state.spot=id; store.set("spot",id); state.day=0; fillSpots(); load(); }
+function selectSpot(id){ state.spot=id; store.set("spot",id); state.day=0; fillSpots(); load(); if(WM.map){ drawSpotMarkers(); const sp=allSpots().find(s=>s.id===id); if(sp && state.view==="map") WM.map.setView([sp.lat,sp.lon],9); } }
 fillSpots();
 $("#model").value=state.model;
 $("#minw").value=state.minW; $("#maxw").value=state.maxW;
@@ -502,13 +533,191 @@ function useHere(){
     $("#mclose").onclick=hideModal;
   }, {enableHighAccuracy:true, timeout:15000});
 }
-$("#model").onchange=e=>{state.model=e.target.value;store.set("model",state.model);load();};
+$("#model").onchange=e=>{state.model=e.target.value;store.set("model",state.model);load(); if(state.view==="map") refreshMap(true);};
 $("#reload").onclick=load;
 function applyTheme(t){ document.body.classList.toggle("dark",t==="dark"); $("#themebtn").textContent = t==="dark"?"☀︎":"☾";
   $("#themebtn").title = t==="dark"?"Pasar a modo diurno":"Pasar a modo nocturno"; }
 state.theme = store.get("theme", (window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light");
 applyTheme(state.theme);
-$("#themebtn").onclick=()=>{ state.theme = state.theme==="dark"?"light":"dark"; store.set("theme",state.theme); applyTheme(state.theme); };
+$("#themebtn").onclick=()=>{ state.theme = state.theme==="dark"?"light":"dark"; store.set("theme",state.theme); applyTheme(state.theme); if(WM.tiles){ WM.tiles.setUrl(tileUrl()); WM.labels.setUrl(labelUrl()); } };
+// ================== MAPA DE VIENTO ==================
+const LEAFLET_JS="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
+const LEAFLET_CSS="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css";
+const WM = {map:null, tiles:null, grid:null, t:0, anim:null, parts:[], samp:null, markers:null, fetching:false};
+function setView(v){
+  state.view=v;
+  document.querySelectorAll(".vtab").forEach(b=>b.classList.toggle("on",b.dataset.v===v));
+  $("#app").style.display = v==="map"?"none":"";
+  $("#mapview").style.display = v==="map"?"":"none";
+  if(v==="map"){ fitMapHeight(); openMap(); } else stopAnim();
+}
+document.querySelectorAll(".vtab").forEach(b=>b.onclick=()=>setView(b.dataset.v));
+function fitMapHeight(){ const h=window.innerHeight-document.querySelector("header").offsetHeight; $("#mapview").style.height=Math.max(380,h)+"px"; }
+function loadLeaflet(){
+  if(window.L) return Promise.resolve();
+  return new Promise((ok,ko)=>{
+    const c=document.createElement("link"); c.rel="stylesheet"; c.href=LEAFLET_CSS; document.head.appendChild(c);
+    const s=document.createElement("script"); s.src=LEAFLET_JS; s.onload=ok; s.onerror=()=>ko(new Error("sin conexión")); document.head.appendChild(s);
+  });
+}
+const ESRI="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/";
+function tileUrl(){ return ESRI+(state.theme==="dark"?"World_Dark_Gray_Base":"World_Light_Gray_Base")+"/MapServer/tile/{z}/{y}/{x}"; }
+function labelUrl(){ return ESRI+(state.theme==="dark"?"World_Dark_Gray_Reference":"World_Light_Gray_Reference")+"/MapServer/tile/{z}/{y}/{x}"; }
+function wmMsg(t){ const e=$("#wmmsg"); e.textContent=t||""; e.style.display=t?"":"none"; }
+async function openMap(){
+  try{ await loadLeaflet(); }catch(e){ wmMsg("No se pudo cargar el mapa: hace falta conexión a internet."); return; }
+  const spot = allSpots().find(s=>s.id===state.spot)||SPOTS[0];
+  if(!WM.map){
+    WM.map = L.map("wmap",{zoomControl:false, worldCopyJump:true, minZoom:2}).setView([spot.lat,spot.lon], 9);
+    WM.tiles = L.tileLayer(tileUrl(),{maxZoom:18,maxNativeZoom:16,attribution:'© Esri · © OpenStreetMap · Open-Meteo'}).addTo(WM.map);
+    const wp=WM.map.createPane("wind"); wp.style.zIndex=450; wp.style.pointerEvents="none";
+    wp.appendChild($("#wmbg")); wp.appendChild($("#wmfx"));
+    const lp=WM.map.createPane("labels"); lp.style.zIndex=550; lp.style.pointerEvents="none";
+    WM.labels = L.tileLayer(labelUrl(),{pane:"labels",maxZoom:18,maxNativeZoom:16}).addTo(WM.map);
+    WM.map.createPane("spots").style.zIndex=650;
+    WM.markers = L.layerGroup().addTo(WM.map);
+    WM.map.on("movestart zoomstart", ()=>{ stopAnim(); $("#wmbg").style.opacity=0; $("#wmfx").style.opacity=0; });
+    WM.map.on("moveend", ()=>{ clearTimeout(WM.deb); WM.deb=setTimeout(refreshMap,350); });
+    WM.map.on("click", e=>{
+      const w = WM.grid && sampleAt(e.latlng.lat, e.latlng.lng);
+      const lat=e.latlng.lat, lon=((e.latlng.lng+540)%360)-180;
+      const txt = w ? `<b>${Math.round(w.s)} kn</b> del ${card(w.d)}` : "Sin datos de viento acá";
+      L.popup().setLatLng(e.latlng).setContent(`<div style="font-size:14px">${txt}<br><span style="color:#5d6d78;font-size:12px">${lat.toFixed(2)}, ${lon.toFixed(2)}</span><br><button class="btn pri" style="margin-top:6px" id="pp_go">Ver pronóstico acá</button></div>`).openOn(WM.map);
+      setTimeout(()=>{ const b=$("#pp_go"); if(b) b.onclick=()=>{ WM.map.closePopup();
+        addSpot({id:"c_pt_"+lat.toFixed(2)+"_"+lon.toFixed(2), name:`Punto ${lat.toFixed(2)}, ${lon.toFixed(2)}`, lat, lon, tz:TZ, tide:"auto"}); setView("fc"); }; },0);
+    });
+    $("#wmprev").onclick=()=>setHour(WM.t-3);
+    $("#wmnext").onclick=()=>setHour(WM.t+3);
+    $("#wmrange").oninput=e=>setHour(+e.target.value);
+    $("#wmloc").onclick=()=>{ if(!navigator.geolocation) return; navigator.geolocation.getCurrentPosition(p=>WM.map.setView([p.coords.latitude,p.coords.longitude],10),()=>wmMsg("No se pudo obtener tu ubicación."),{timeout:15000}); };
+    window.addEventListener("resize",()=>{ if(state.view==="map"){ fitMapHeight(); WM.map.invalidateSize(); refreshMap(); } });
+  } else {
+    WM.map.invalidateSize();
+  }
+  drawSpotMarkers();
+  setTimeout(()=>{ WM.map.invalidateSize(); refreshMap(true); },50);
+}
+function drawSpotMarkers(){
+  if(!WM.markers) return; WM.markers.clearLayers();
+  allSpots().forEach(s=>{
+    const m=L.circleMarker([s.lat,s.lon],{pane:"spots",radius:7,color:"#0a0a0a",weight:2,fillColor:"#f28c0f",fillOpacity:1}).addTo(WM.markers);
+    m.bindPopup(`<b>${escH(s.name)}</b><br><button class="btn pri" style="margin-top:6px" data-go="${s.id}">Ver pronóstico</button>`);
+    m.on("popupopen",()=>{ const b=document.querySelector(`[data-go="${s.id}"]`); if(b) b.onclick=()=>{ WM.map.closePopup(); selectSpot(s.id); setView("fc"); }; });
+  });
+}
+// ---- datos de viento en grilla ----
+async function refreshMap(force){
+  if(!WM.map || state.view!=="map") return;
+  const b = WM.map.getBounds(), z = WM.map.getZoom();
+  const g = WM.grid;
+  const inside = g && !force && g.z===z && b.getSouth()>=g.lat0 && b.getNorth()<=g.lat1 && b.getWest()>=g.lon0 && b.getEast()<=g.lon1 && g.model===state.model;
+  if(!inside){ await fetchGrid(b.pad(0.25), z); }
+  if(WM.grid){ setHour(WM.t, true); }
+}
+async function fetchGrid(b, z){
+  const size=WM.map.getSize();
+  let lat0=Math.max(-80,b.getSouth()), lat1=Math.min(80,b.getNorth()), lon0=b.getWest(), lon1=b.getEast();
+  if(lon1-lon0>360){ lon0=-180; lon1=180; }
+  const nx = 9, ny = Math.max(7, Math.min(15, Math.round(nx*size.y/size.x)));
+  const lats=[], lons=[];
+  for(let j=0;j<ny;j++) for(let i=0;i<nx;i++){
+    lats.push((lat0+(lat1-lat0)*j/(ny-1)).toFixed(3));
+    lons.push(((((lon0+(lon1-lon0)*i/(nx-1))+540)%360)-180).toFixed(3));
+  }
+  const u=new URL("https://api.open-meteo.com/v1/forecast");
+  Object.entries({latitude:lats.join(","),longitude:lons.join(","),hourly:"wind_speed_10m,wind_direction_10m",
+    wind_speed_unit:"kn",forecast_days:4,timezone:TZ,models:state.model}).forEach(([k,v])=>u.searchParams.set(k,v));
+  wmMsg("Cargando viento…");
+  try{
+    const r=await fetch(u); const j=await r.json();
+    if(!r.ok||j.error) throw new Error(j.reason||("error "+r.status));
+    const arr = Array.isArray(j)?j:[j];
+    const times = arr[0].hourly.time;
+    const S=[], D=[];
+    arr.forEach(p=>{ S.push(p.hourly.wind_speed_10m); D.push(p.hourly.wind_direction_10m); });
+    const keep = WM.grid && WM.grid.times[WM.t];
+    WM.grid={lat0,lat1,lon0,lon1,nx,ny,S,D,times,z,model:state.model};
+    let t = keep ? times.indexOf(keep) : -1;
+    if(t<0){ const now=nowLocal().slice(0,13); t=Math.max(0,times.findIndex(x=>x.slice(0,13)===now)); }
+    WM.t=t; $("#wmrange").max=times.length-1;
+    wmMsg("");
+  }catch(e){ wmMsg("No pude cargar el viento del mapa ("+e.message+")."); }
+}
+function sampleAt(lat, lon){
+  const g=WM.grid; if(!g) return null;
+  while(lon<g.lon0) lon+=360; while(lon>g.lon1+1e-9 && lon-360>=g.lon0) lon-=360;
+  const fx=(lon-g.lon0)/(g.lon1-g.lon0)*(g.nx-1), fy=(lat-g.lat0)/(g.lat1-g.lat0)*(g.ny-1);
+  if(fx<0||fy<0||fx>g.nx-1||fy>g.ny-1) return null;
+  const i=Math.min(g.nx-2,Math.floor(fx)), j=Math.min(g.ny-2,Math.floor(fy)), a=fx-i, c=fy-j, t=WM.t;
+  let U=0,V=0,W=0;
+  [[i,j,(1-a)*(1-c)],[i+1,j,a*(1-c)],[i,j+1,(1-a)*c],[i+1,j+1,a*c]].forEach(([x,y,w])=>{
+    const k=y*g.nx+x, s=g.S[k][t], d=g.D[k][t]; if(s==null||d==null) return;
+    U+=w*(-s*Math.sin(d*Math.PI/180)); V+=w*(-s*Math.cos(d*Math.PI/180)); W+=w; });
+  if(W===0) return null; U/=W; V/=W;
+  const s=Math.hypot(U,V); const d=(Math.atan2(-U,-V)*180/Math.PI+360)%360;
+  return {u:U,v:V,s,d};
+}
+function setHour(t, keepView){
+  const g=WM.grid; if(!g) return;
+  WM.t=Math.max(0,Math.min(g.times.length-1,t));
+  $("#wmrange").value=WM.t;
+  const tm=g.times[WM.t], di=new Date(tm.slice(0,10)+"T12:00:00");
+  $("#wmtime").textContent = di.toLocaleDateString("es-AR",{weekday:"short",day:"numeric",month:"numeric"})+" · "+tm.slice(11,13)+" h";
+  buildField(); startAnim();
+}
+// ---- dibujo: fondo de colores + líneas animadas ----
+function buildField(){
+  const size=WM.map.getSize(), W=size.x, H=size.y, step=8;
+  const cols=Math.ceil(W/step)+1, rows=Math.ceil(H/step)+1;
+  const U=new Float32Array(cols*rows), V=new Float32Array(cols*rows), S=new Float32Array(cols*rows).fill(-1);
+  for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
+    const ll=WM.map.containerPointToLatLng([c*step,r*step]); const w=sampleAt(ll.lat,ll.lng);
+    if(w){ const k=r*cols+c; U[k]=w.u; V[k]=w.v; S[k]=w.s; }
+  }
+  WM.samp={U,V,S,cols,rows,step,W,H};
+  const origin=WM.map.containerPointToLayerPoint([0,0]);
+  [$("#wmbg"),$("#wmfx")].forEach(cv=>L.DomUtil.setPosition(cv,origin));
+  const dpr=window.devicePixelRatio||1;
+  [$("#wmbg"),$("#wmfx")].forEach(cv=>{ cv.width=W*dpr; cv.height=H*dpr; cv.style.width=W+"px"; cv.style.height=H+"px"; cv.getContext("2d").setTransform(dpr,0,0,dpr,0,0); });
+  const off=document.createElement("canvas"); off.width=cols; off.height=rows;
+  const octx=off.getContext("2d"), img=octx.createImageData(cols,rows);
+  for(let k=0;k<cols*rows;k++){ const s=S[k]; if(s<0) continue; const [R,G,B]=hex2rgb(windColorMap(s)); img.data[k*4]=R; img.data[k*4+1]=G; img.data[k*4+2]=B; img.data[k*4+3]=115; }
+  octx.putImageData(img,0,0);
+  const bg=$("#wmbg").getContext("2d"); bg.clearRect(0,0,W,H); bg.imageSmoothingEnabled=true; bg.drawImage(off,0,0,cols,rows,0,0,(cols)*step,(rows)*step);
+  $("#wmbg").style.opacity=1; $("#wmfx").style.opacity=1;
+  const n=Math.min(2200, Math.round(W*H/220));
+  WM.parts=[...Array(n)].map(()=>newPart());
+}
+function windColorMap(kn){ // escala continua tipo mapa (azul → verde → amarillo → rojo → violeta)
+  const s=[[0,"#5b6fd6"],[5,"#4f97e0"],[9,"#3fc1d6"],[13,"#3dcf8e"],[17,"#8bd43b"],[21,"#e2d634"],[25,"#f2a531"],[30,"#ec5f34"],[36,"#d23468"],[45,"#9b2fb3"]];
+  if(kn<=s[0][0]) return s[0][1];
+  for(let i=1;i<s.length;i++){ if(kn<=s[i][0]){ const [a,ca]=s[i-1],[b,cb]=s[i],f=(kn-a)/(b-a); const A=hex2rgb(ca),B=hex2rgb(cb); return "#"+A.map((x,j)=>Math.round(x+(B[j]-x)*f).toString(16).padStart(2,"0")).join(""); } }
+  return s.at(-1)[1];
+}
+function hex2rgb(h){ return [1,3,5].map(i=>parseInt(h.slice(i,i+2),16)); }
+function newPart(){ const p=WM.samp; return {x:Math.random()*p.W, y:Math.random()*p.H, age:Math.floor(Math.random()*80)}; }
+function fieldAt(x,y){ const p=WM.samp; const c=Math.round(x/p.step), r=Math.round(y/p.step); if(c<0||r<0||c>=p.cols||r>=p.rows) return null; const k=r*p.cols+c; if(p.S[k]<0) return null; return [p.U[k],p.V[k]]; }
+function startAnim(){
+  stopAnim(); if(!WM.samp) return;
+  const ctx=$("#wmfx").getContext("2d"), {W,H}=WM.samp;
+  ctx.clearRect(0,0,W,H);
+  const k=0.07;
+  const frame=()=>{
+    ctx.globalCompositeOperation="destination-in"; ctx.fillStyle="rgba(0,0,0,0.9)"; ctx.fillRect(0,0,W,H);
+    ctx.globalCompositeOperation="source-over"; ctx.strokeStyle="rgba(255,255,255,0.85)"; ctx.lineWidth=1.2; ctx.beginPath();
+    for(const p of WM.parts){
+      const f=fieldAt(p.x,p.y);
+      if(!f||p.age>90){ Object.assign(p,newPart(),{age:0}); continue; }
+      const nx=p.x+f[0]*k, ny=p.y-f[1]*k;
+      ctx.moveTo(p.x,p.y); ctx.lineTo(nx,ny); p.x=nx; p.y=ny; p.age++;
+    }
+    ctx.stroke();
+    WM.anim=requestAnimationFrame(frame);
+  };
+  WM.anim=requestAnimationFrame(frame);
+}
+function stopAnim(){ if(WM.anim) cancelAnimationFrame(WM.anim); WM.anim=null; }
+
 $("#cfgbtn").onclick=()=>$("#settings").classList.toggle("open");
 $("#minw").onchange=e=>{state.minW=+e.target.value;store.set("minW",state.minW);if(state.data)render();};
 $("#maxw").onchange=e=>{state.maxW=+e.target.value;store.set("maxW",state.maxW);if(state.data)render();};
