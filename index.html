@@ -106,7 +106,7 @@
   .wmlays{position:absolute;top:10px;left:10px;right:10px;z-index:800;display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}
   .wmlay{flex:none;border:none;border-radius:16px;padding:6px 12px;font-weight:600;font-size:13px;background:#fffffff0;color:#16232d;box-shadow:0 1px 4px #0004}
   .wmlay.on{background:var(--orange);color:#0a0a0a}
-  #wmmsg{position:absolute;top:52px;left:50%;transform:translateX(-50%);z-index:800;background:#000c;color:#fff;padding:6px 12px;border-radius:16px;font-size:13px;white-space:nowrap}
+  #wmmsg{position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:800;background:#000c;color:#fff;padding:6px 12px;border-radius:16px;font-size:13px;white-space:nowrap}
   .wmbtn{position:absolute;right:12px;bottom:34px;z-index:800;width:44px;height:44px;border-radius:50%;border:none;background:#fff;color:#111;font-size:22px;box-shadow:0 2px 8px #0005}
   .wmbar{user-select:none;-webkit-user-select:none;display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--card);border-top:1px solid var(--line)}
   .wmmid{flex:1;text-align:center} #wmtime{font-weight:700;font-size:14px;text-transform:capitalize} #wmrange{width:100%}
@@ -119,6 +119,7 @@
   .sbtn.stop{background:#e8433c}
   #smap{height:280px;border-radius:10px;margin-top:12px;background:var(--soft)}
   .ssum{margin-top:10px}
+  .sbk{display:flex;gap:8px;margin-bottom:10px} .sbk .btn{flex:1;text-align:center;cursor:pointer;font-size:14px}
   .sitem2{position:relative;border:1px solid var(--line);border-radius:10px;padding:9px 44px 9px 11px;margin-bottom:6px;cursor:pointer}
   .sitem2.sel{border-color:var(--orange)} .sitem2 span{color:var(--muted);font-size:12px;margin-left:6px}
   .snums{font-size:13px;color:var(--muted);margin-top:2px}
@@ -169,7 +170,11 @@
     <div id="s_summary"></div>
     <div id="smap"></div>
   </section>
-  <section class="card"><h2>Mis sesiones</h2><div id="s_list"></div></section>
+  <section class="card"><h2>Mis sesiones</h2>
+    <div class="sbk"><button class="btn" id="s_exp">⬇ Exportar todas</button><label class="btn" for="s_imp">⬆ Importar</label><input type="file" id="s_imp" accept=".json,application/json" hidden></div>
+    <div id="s_list"></div>
+    <div class="note">Las sesiones se guardan solo en este celular. Exportalas de vez en cuando como respaldo: si desinstalás la app o borrás los datos del navegador, se pierden.</div>
+  </section>
 </section>
 <section id="mapview" style="display:none">
   <div class="wmlegend" id="wmlegend"></div>
@@ -177,7 +182,6 @@
     <div id="wmap"></div>
     <canvas id="wmbg"></canvas><canvas id="wmfx"></canvas>
     <div id="wmmsg" style="display:none"></div>
-    <div class="wmlays"><button class="wmlay" data-l="wind">Viento</button><button class="wmlay" data-l="gust">Ráfagas</button><button class="wmlay" data-l="rain">Lluvia</button><button class="wmlay" data-l="temp">Temp.</button><button class="wmlay" data-l="waves">Olas</button></div>
     <button class="wmbtn" id="wmloc" title="Ir a mi ubicación" aria-label="Ir a mi ubicación">◎</button>
   </div>
   <div class="wmbar">
@@ -652,14 +656,11 @@ async function openMap(){
     WM.map.on("click", e=>{
       const w = WM.grid && sampleAt(e.latlng.lat, e.latlng.lng);
       const lat=e.latlng.lat, lon=((e.latlng.lng+540)%360)-180;
-      const txt = w ? `<b>${Math.round(w.s)} kn</b> del ${card(w.d)}${w.G!=null?` · ráfagas ${Math.round(w.G)}`:""}`
-        + `<div style="font-size:13px;margin-top:3px">${w.T!=null?`🌡 ${Math.round(w.T)}°C`:""}${w.P!=null?` · 🌧 ${w.P<0.1?"sin lluvia":w.P.toFixed(1)+" mm"}`:""}${w.Wv!=null?` · 🌊 ${w.Wv.toFixed(1)} m`:""}</div>`
-        : "Sin datos acá";
+      const txt = w ? `<b>${Math.round(w.s)} kn</b> del ${card(w.d)}` : "Sin datos de viento acá";
       L.popup().setLatLng(e.latlng).setContent(`<div style="font-size:14px">${txt}<br><span style="color:#5d6d78;font-size:12px">${lat.toFixed(2)}, ${lon.toFixed(2)}</span><br><button class="btn pri" style="margin-top:6px" id="pp_go">Ver pronóstico acá</button></div>`).openOn(WM.map);
       setTimeout(()=>{ const b=$("#pp_go"); if(b) b.onclick=()=>{ WM.map.closePopup();
         addSpot({id:"c_pt_"+lat.toFixed(2)+"_"+lon.toFixed(2), name:`Punto ${lat.toFixed(2)}, ${lon.toFixed(2)}`, lat, lon, tz:TZ, tide:"auto"}); setView("fc"); }; },0);
     });
-    document.querySelectorAll(".wmlay").forEach(b=>b.onclick=()=>setLayer(b.dataset.l));
     drawLegend();
     $("#wmprev").onclick=()=>setHour(WM.t-3);
     $("#wmnext").onclick=()=>setHour(WM.t+3);
@@ -700,7 +701,7 @@ async function fetchGrid(b, z){
     lons.push(((((lon0+(lon1-lon0)*i/(nx-1))+540)%360)-180).toFixed(3));
   }
   const u=new URL("https://api.open-meteo.com/v1/forecast");
-  Object.entries({latitude:lats.join(","),longitude:lons.join(","),hourly:"wind_speed_10m,wind_direction_10m,wind_gusts_10m,precipitation,temperature_2m",
+  Object.entries({latitude:lats.join(","),longitude:lons.join(","),hourly:"wind_speed_10m,wind_direction_10m",
     wind_speed_unit:"kn",forecast_days:4,timezone:TZ,models:state.model}).forEach(([k,v])=>u.searchParams.set(k,v));
   wmMsg("Cargando datos del mapa…");
   try{
@@ -711,12 +712,11 @@ async function fetchGrid(b, z){
     const pick = k => arr.map(p=>p.hourly[k]);
     const keep = WM.grid && WM.grid.times[WM.t];
     WM.grid={lat0,lat1,lon0,lon1,nx,ny,lats,lons,times,z,model:state.model,
-      S:pick("wind_speed_10m"), D:pick("wind_direction_10m"), G:pick("wind_gusts_10m"), P:pick("precipitation"), T:pick("temperature_2m"), Wv:null};
+      S:pick("wind_speed_10m"), D:pick("wind_direction_10m"), Wv:null};
     let t = keep ? times.indexOf(keep) : -1;
     if(t<0){ const now=nowLocal().slice(0,13); t=Math.max(0,times.findIndex(x=>x.slice(0,13)===now)); }
     WM.t=t; $("#wmrange").max=times.length-1;
     wmMsg("");
-    if(WM.layer==="waves") await fetchWaves();
   }catch(e){ wmMsg("No pude cargar los datos del mapa ("+e.message+")."); }
 }
 async function fetchWaves(){
@@ -742,7 +742,7 @@ const LAYERS = {
   temp:  {name:"Temp.",   unit:"°C", key:"T", scale:[[-15,"#9b2fb3"],[-5,"#5b6fd6"],[0,"#4f97e0"],[5,"#3fc1d6"],[10,"#3dcf8e"],[15,"#8bd43b"],[20,"#e2d634"],[25,"#f2a531"],[30,"#ec5f34"],[38,"#d23468"]]},
   waves: {name:"Olas",    unit:"m",  key:"Wv", scale:[[0,"#5b6fd6"],[0.5,"#4f97e0"],[1,"#3fc1d6"],[1.5,"#3dcf8e"],[2,"#8bd43b"],[3,"#e2d634"],[4,"#f2a531"],[6,"#ec5f34"],[8,"#d23468"]]},
 };
-WM.layer = store.get("layer","wind"); if(!LAYERS[WM.layer]) WM.layer="wind";
+WM.layer = "wind";
 function scaleColor(scale, v){
   if(v<=scale[0][0]) return scale[0][1];
   for(let i=1;i<scale.length;i++){ if(v<=scale[i][0]){ const [a,ca]=scale[i-1],[b,cb]=scale[i],f=(v-a)/(b-a); const A=hex2rgb(ca),B=hex2rgb(cb); return "#"+A.map((x,j)=>Math.round(x+(B[j]-x)*f).toString(16).padStart(2,"0")).join(""); } }
@@ -917,8 +917,10 @@ function showSession(id){
   const d=new Date(s.start);
   $("#s_summary").innerHTML=`<div class="ssum"><div><b>${d.toLocaleDateString("es-AR",{weekday:"long",day:"numeric",month:"long"})}</b> · ${d.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit",hourCycle:"h23"})} h${s.spot?" · "+escH(s.spot):""}</div>
     <div class="sgrid"><div><span>Duración</span><b>${fmtDur(s.end-s.start)}</b></div><div><span>Distancia</span><b>${s.dist.toFixed(2)} km</b></div>
-    <div><span>Vel. máxima</span><b>${s.max.toFixed(1)} kn</b></div><div><span>Mejor 10 s</span><b>${s.best10.toFixed(1)} kn</b></div></div>
-    ${s.wind?`<div class="note" style="margin-top:6px">Viento pronosticado al salir: ${escH(s.wind)}</div>`:""}</div>`;
+    <div><span>Vel. máxima</span><b>${s.max.toFixed(1)} kn</b></div><div><span>Mejor 10 s</span><b>${s.best10>0?s.best10.toFixed(1)+" kn":"–"}</b></div></div>
+    ${s.wind?`<div class="note" style="margin-top:6px">Viento pronosticado al salir: ${escH(s.wind)}</div>`:""}
+    <button class="btn" id="s_gpx" style="margin-top:8px">⬇ Descargar recorrido (GPX)</button></div>`;
+  $("#s_gpx").onclick=()=>downloadGPX(s);
   if(SS.map && s.pts.length){ SS.line.setLatLngs(s.pts.map(p=>[p[0],p[1]])); SS.map.fitBounds(SS.line.getBounds().pad(0.2)); }
   renderSessList();
 }
@@ -937,6 +939,40 @@ function renderSessList(){
   });
 }
 $("#s_btn").onclick=()=> SS.on ? stopSession() : startSession();
+// ---- respaldo de sesiones ----
+function fileDate(ms){ const d=new Date(ms); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")+"_"+String(d.getHours()).padStart(2,"0")+String(d.getMinutes()).padStart(2,"0"); }
+function saveFile(name, text, type){
+  const blob=new Blob([text],{type}); const url=URL.createObjectURL(blob);
+  const a=document.createElement("a"); a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),5000);
+}
+function okMsg(t){ showModal(`<h3>${t}</h3><div class="mrow"><button class="btn pri" id="mok">Listo</button></div>`); $("#mok").onclick=hideModal; }
+$("#s_exp").onclick=()=>{
+  if(!sessions.length){ okMsg("Todavía no hay sesiones para exportar"); return; }
+  saveFile(`windsurf-sesiones_${fileDate(Date.now())}.json`, JSON.stringify({app:"windsurf-ushuaia",version:1,exported:new Date().toISOString(),sessions},null,0),"application/json");
+};
+$("#s_imp").onchange=async e=>{
+  const f=e.target.files[0]; e.target.value=""; if(!f) return;
+  try{
+    const j=JSON.parse(await f.text()); const arr=Array.isArray(j)?j:j.sessions;
+    if(!Array.isArray(arr)) throw new Error("formato");
+    const valid=arr.filter(x=>x && typeof x.id==="number" && Array.isArray(x.pts) && typeof x.dist==="number");
+    const have=new Set(sessions.map(x=>x.id)); const nuevas=valid.filter(x=>!have.has(x.id));
+    sessions=sessions.concat(nuevas).sort((a,b)=>b.start-a.start); store.set("sessions",sessions); renderSessList();
+    okMsg(nuevas.length?(nuevas.length===1?"Se importó 1 sesión":`Se importaron ${nuevas.length} sesiones`):"No había sesiones nuevas en ese archivo");
+  }catch(err){ okMsg("Ese archivo no es un respaldo de sesiones válido"); }
+};
+function downloadGPX(s){
+  const pts=s.pts.map(p=>`<trkpt lat="${p[0]}" lon="${p[1]}"><time>${new Date(s.start+p[2]*1000).toISOString()}</time></trkpt>`).join("\n");
+  const name=`Windsurf ${new Date(s.start).toLocaleString("es-AR",{hourCycle:"h23"})}${s.spot?" - "+s.spot:""}`;
+  const gpx=`<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Windsurf Ushuaia" xmlns="http://www.topografix.com/GPX/1/1">
+<metadata><name>${escH(name)}</name><time>${new Date(s.start).toISOString()}</time></metadata>
+<trk><name>${escH(name)}</name><type>windsurfing</type><trkseg>
+${pts}
+</trkseg></trk></gpx>`;
+  saveFile(`windsurf_${fileDate(s.start)}.gpx`, gpx, "application/gpx+xml");
+}
 
 let rz; window.addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(()=>{if(state.data)render();},200);});
 load();
