@@ -196,10 +196,10 @@
 const TZ0 = "America/Argentina/Ushuaia";
 let TZ = TZ0;
 const SPOTS = [
-  {id:"ushuaia",   name:"Ushuaia (bahía)",    lat:-54.812, lon:-68.30, tide:true, station:"Ushuaia",
+  {id:"ushuaia",   name:"Ushuaia (bahía)",    lat:-54.812, lon:-68.30, tide:true, station:"Ushuaia", z0:1.10, z0src:"SHN",
      harm:{M2:[0.554,239.1],S2:[0.057,250.7],N2:[0.142,199.7],O1:[0.154,55.9],K1:[0.197,104.2]},
      tidePts:[[-54.812,-68.30],[-54.84,-68.24],[-54.86,-68.12],[-54.88,-67.95],[-54.90,-67.70],[-54.95,-67.30],[-55.00,-66.90],[-55.05,-66.60]]},
-  {id:"riogrande", name:"Río Grande (costa)", lat:-53.785, lon:-67.68, tide:true, station:"Río Grande (exterior)",
+  {id:"riogrande", name:"Río Grande (costa)", lat:-53.785, lon:-67.68, tide:true, station:"Río Grande (exterior)", z0:4.58, z0src:"aprox",
      harm:{M2:[2.753,336.7],S2:[0.694,33.4],N2:[0.675,307.7],O1:[0.190,55.1],K1:[0.266,112.4]},
      tidePts:[[-53.785,-67.68],[-53.79,-67.58],[-53.80,-67.45],[-53.82,-67.30],[-53.85,-67.10],[-53.90,-66.80]]},
   {id:"fagnano",   name:"Lago Fagnano (Tolhuin)", lat:-54.515, lon:-67.20, tide:false},
@@ -277,6 +277,10 @@ async function load(){
       fetch(w).then(r=>{ if(!r.ok) throw new Error("viento "+r.status); return r.json(); }),
       spot.harm ? Promise.resolve(predictTide(spot)) : spot.tide==="auto" ? loadTideAuto(spot) : spot.tide ? loadTide(spot) : Promise.resolve(null)
     ]);
+    if(mr && !mr._harm && mr.hourly?.sea_level_height_msl){
+      const v=mr.hourly.sea_level_height_msl, mn=Math.min(...v.filter(x=>x!=null));
+      if(mn<0){ const off=Math.ceil(-mn*2)/2; mr.hourly.sea_level_height_msl=v.map(x=>x==null?null:x+off); mr._off=off; }
+    }
     state.data = {spot, w:wr, m:mr, loadedAt:new Date()};
     render();
   }catch(e){
@@ -300,7 +304,7 @@ function predictTide(spot){
     const C={M2:[2*Tg-2*s+2*h,fM2,uM2], S2:[2*Tg,1,0], N2:[2*Tg-3*s+2*h+p,fM2,uM2],
              K1:[Tg+h-90,fK1,uK1], O1:[Tg-2*s+h+90,fO1,uO1]};
     let z=0; for(const c in H){ const [A,G]=H[c],[V,f,u]=C[c]; z+=f*A*Math.cos((V+u-G)*rad); }
-    time.push(new Date(ms-3*36e5).toISOString().slice(0,16)); val.push(z);
+    time.push(new Date(ms-3*36e5).toISOString().slice(0,16)); val.push(z+(spot.z0||0));
   }
   return {hourly:{time, sea_level_height_msl:val}, _harm:true};
 }
@@ -491,7 +495,7 @@ function render(){
     if(tideH){
       tideHtml += `<section class="card"><h2>Marea · ${fmtDay(dSel,state.day)}</h2><div id="tidechart"></div>
         <div class="tides">${ext.filter(e=>e.t.slice(0,10)===dSel).map(e=>`<div class="tide">${e.hi?"▲ Pleamar":"▼ Bajamar"} <b>${hhmm(e.t)}</b> · ${e.v.toFixed(1)} m</div>`).join("")||"<span class='note'>Sin extremos este día</span>"}</div>
-        <div class="note">${m._harm?`Marea astronómica calculada con las constantes armónicas de la estación ${spot.station} del SHN. Alturas respecto del nivel medio (las tablas del SHN suman un valor fijo, por eso sus números son mayores); los horarios y la diferencia entre pleamar y bajamar son los que importan. No incluye el efecto del viento ni de la presión.`:""}${m._km>3?`Calculada en el punto de mar más cercano con datos, a ${m._km} km del spot. `:""}${m._harm?"":"Alturas respecto del nivel medio del mar, calculadas por modelo (Open-Meteo). Comparalo con la tabla oficial del puerto antes de confiar: cerca de la costa la altura puede diferir."}</div></section>`;
+        <div class="note">${m._harm?`Marea astronómica calculada con las constantes armónicas de la estación ${spot.station} del SHN. ${spot.z0src==="SHN"?`Alturas referidas al plano de reducción del SHN (${spot.z0.toFixed(2).replace(".",",")} m bajo el nivel medio), igual que las tablas oficiales.`:`Alturas referidas a un plano de reducción aproximado (${spot.z0.toFixed(2).replace(".",",")} m bajo el nivel medio): pueden diferir unos centímetros de la tabla oficial.`} No incluye el efecto del viento ni de la presión.`:""}${m._km>3?`Calculada en el punto de mar más cercano con datos, a ${m._km} km del spot. `:""}${m._harm?"":`Marea calculada por modelo (Open-Meteo). Alturas aproximadas${m._off?` (se sumaron ${m._off.toFixed(1).replace(".",",")} m para que no queden negativas)`:""}: comparalas con la tabla oficial del puerto antes de confiar.`}</div></section>`;
     } else if(m && m._none){
       tideHtml += `<section class="card"><h2>Marea</h2><div class="note" style="margin:0">No hay datos de marea para este lugar (no hay mar cerca, o es un lago o río). Se muestra solo el viento.</div></section>`;
     } else {
@@ -514,7 +518,7 @@ function drawTide(T,Hh,ext,day,now,sunrise,sunset){
   if(pts.length<2) return;
   const box=document.getElementById("tidechart");
   const W=Math.max(320,box.clientWidth||900),Hc=W<600?200:220,pl=40,pr=12,pt=22,pb=28;
-  let lo=Math.min(...pts.map(p=>p[1])), hi=Math.max(...pts.map(p=>p[1])); const pad=(hi-lo)*0.15||0.2; lo-=pad; hi+=pad;
+  let lo=Math.min(...pts.map(p=>p[1])), hi=Math.max(...pts.map(p=>p[1])); const pad=(hi-lo)*0.15||0.2; lo = lo>=0 ? 0 : lo-pad; hi+=pad;
   const X=h=>pl+(W-pl-pr)*h/24, Y=v=>pt+(Hc-pt-pb)*(1-(v-lo)/(hi-lo));
   let path=`M${X(pts[0][0])},${Y(pts[0][1])}`;
   const P=pts.map(([h,v])=>[X(h),Y(v)]);
