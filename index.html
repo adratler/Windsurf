@@ -342,8 +342,8 @@ async function load(){
     const [wr, mr, metar, tafAll, hist] = await Promise.all([
       fetch(w).then(r=>{ if(!r.ok) throw new Error("viento "+r.status); return r.json(); }),
       spot.harm ? Promise.resolve(predictTide(spot)) : spot.tide==="auto" ? loadTideAuto(spot) : spot.tide ? loadTide(spot) : Promise.resolve(null),
-      spot.metar ? loadMetar(spot.metar) : Promise.resolve(null),
-      spot.metar ? getTafData() : Promise.resolve(null),
+      spot.metar ? loadMetarQuick(spot.metar) : Promise.resolve(null),
+      spot.metar ? loadLocalJSON("taf.json") : Promise.resolve(null),
       spot.metar ? loadLocalJSON("history.json") : Promise.resolve(null)
     ]);
     if(mr && !mr._harm && mr.hourly?.sea_level_height_msl){
@@ -354,6 +354,7 @@ async function load(){
     const taf = (spot.metar && Array.isArray(tafAll)) ? tafAll.filter(x=>x.icaoId===spot.metar).sort((a,b)=>(b.issueTime||0)-(a.issueTime||0))[0]||null : null;
     state.data = {spot, w:wr, m:mr, metar, taf, calib, loadedAt:new Date()};
     render();
+    if(spot.metar){ refreshMetar(); refreshTaf(); }   // en segundo plano: si hay METAR/TAF más nuevo, actualiza la pantalla
   }catch(e){
     $("#app").innerHTML = `<div class="err">No pude descargar el pronóstico (${e.message}). Revisá la conexión a internet y tocá ↻.</div>`;
   }
@@ -408,6 +409,18 @@ const hLocal = ts => new Date(ts*1000).toLocaleTimeString("es-AR",{hour:"2-digit
 const dLocal = ts => { const d=new Date(ts*1000), n=new Date(); const same=d.toLocaleDateString("es-AR",{timeZone:TZ})===n.toLocaleDateString("es-AR",{timeZone:TZ}); return same?"":d.toLocaleDateString("es-AR",{weekday:"short",timeZone:TZ})+" "; };
 
 // METAR: lo baja tu GitHub cada 30 min y lo guarda en metar.json, junto a la app
+async function loadMetarQuick(code){
+  const arr = await loadLocalJSON("metar.json");
+  if(Array.isArray(arr)){ MV.raw = arr; MV.fetchedAt = Date.now(); return parseMetar(arr, code); }
+  return null;
+}
+async function refreshTaf(){
+  const sp = state.data && state.data.spot; if(!sp || !sp.metar) return;
+  const all = await getTafData(); if(!Array.isArray(all)) return;
+  const t = all.filter(x=>x.icaoId===sp.metar).sort((a,b)=>(Date.parse(b.issueTime)||0)-(Date.parse(a.issueTime)||0))[0]||null;
+  const old = state.data.taf;
+  if(t && (!old || old.rawTAF!==t.rawTAF) && state.data.spot===sp){ state.data.taf=t; if(state.view==="fc") render(); }
+}
 async function loadMetar(code){
   if(!location.protocol.startsWith("http")) return null;
   try{
@@ -1189,16 +1202,17 @@ const PROXIES = [
   u=>"https://api.allorigins.win/get?url="+encodeURIComponent(u),
   u=>"https://api.allorigins.win/raw?url="+encodeURIComponent(u)];
 async function fetchMetarLive(url){
-  for(const px of PROXIES){
+  const one = async px => {
+    const ctl=new AbortController(); const tm=setTimeout(()=>ctl.abort(),10000);
     try{
-      const ctl=new AbortController(); const tm=setTimeout(()=>ctl.abort(),10000);
-      const r=await fetch(px(url||AW_URL),{cache:"no-store",signal:ctl.signal}); clearTimeout(tm);
-      if(!r.ok) continue; let j=await r.json();
-      if(j && typeof j.contents==="string"){ try{ j=JSON.parse(j.contents); }catch(e){ continue; } }   // formato de allorigins /get
+      const r=await fetch(px(url||AW_URL),{cache:"no-store",signal:ctl.signal});
+      if(!r.ok) throw 0; let j=await r.json();
+      if(j && typeof j.contents==="string") j=JSON.parse(j.contents);   // formato de allorigins /get
       if(Array.isArray(j) && j.length && j[0].icaoId) return j;
-    }catch(e){}
-  }
-  return null;
+      throw 0;
+    } finally { clearTimeout(tm); }
+  };
+  try{ return await Promise.any(PROXIES.map(one)); }catch(e){ return null; }
 }
 async function getTafData(){
   let j = await loadLocalJSON("taf.json");
