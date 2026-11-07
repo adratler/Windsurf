@@ -410,7 +410,10 @@ const dLocal = ts => { const d=new Date(ts*1000), n=new Date(); const same=d.toL
 
 // METAR: lo baja tu GitHub cada 30 min y lo guarda en metar.json, junto a la app
 async function loadMetarQuick(code){
-  const arr = await loadLocalJSON("metar.json");
+  let arr = null;
+  try{ arr = JSON.parse(localStorage.getItem("vmtdf_metarcache")||"null"); }catch(e){}
+  const gh = await loadLocalJSON("metar.json");
+  if(newestAgeMin(gh) < newestAgeMin(arr)) arr = gh;
   if(Array.isArray(arr)){ MV.raw = arr; MV.fetchedAt = Date.now(); return parseMetar(arr, code); }
   return null;
 }
@@ -1213,12 +1216,15 @@ function parseMetarText(raw, icao){
 }
 
 // Servidor propio en Cloudflare (se completa cuando Adrián lo cree). Ej: "https://metar-windsurf.adratler.workers.dev"
-const WORKER_URL = "";
+const WORKER_URL = "https://metar-windsurf.adriandratler.workers.dev/";
 async function fetchFromWorker(kind){
   if(!WORKER_URL) return null;
   try{ const ctl=new AbortController(); const tm=setTimeout(()=>ctl.abort(),8000);
     const r=await fetch(WORKER_URL+"?t="+kind+"&_="+Date.now(),{cache:"no-store",signal:ctl.signal}); clearTimeout(tm);
-    if(!r.ok) return null; const j=await r.json(); return Array.isArray(j)&&j.length ? j : null; }catch(e){ return null; }
+    if(!r.ok) return null; const j=await r.json(); if(!Array.isArray(j)||!j.length) return null;
+    if(kind==="taf" && !j[0].rawTAF) return null;          // asegurarse de que sea TAF
+    if(kind==="metar" && !j[0].icaoId) return null;
+    return j; }catch(e){ return null; }
 }
 // Iowa State University (IEM): METAR de todo el mundo; se intenta leer directo
 async function fetchFromIEM(){
@@ -1261,9 +1267,11 @@ async function getTafData(){
 }
 function newestAgeMin(arr){ if(!Array.isArray(arr)||!arr.length) return Infinity; return (Date.now()/1000-Math.max(...arr.map(o=>o.obsTime||0)))/60; }
 async function getMetarData(){
+  const w = await fetchFromWorker("metar");
+  if(w){ try{ localStorage.setItem("vmtdf_metarcache", JSON.stringify(w)); }catch(e){} return w; }
   let j = await loadLocalJSON("metar.json");
   if(newestAgeMin(j) > 75){
-    const live = (await fetchFromWorker("metar")) || (await fetchFromIEM()) || (await fetchMetarLive());
+    const live = (await fetchFromIEM()) || (await fetchMetarLive());
     if(live && newestAgeMin(live) < newestAgeMin(j)){
       // combinar: lo nuevo + lo guardado (para tener las últimas observaciones)
       const seen=new Set(live.map(o=>o.icaoId+o.obsTime)); j = live.concat((j||[]).filter(o=>!seen.has(o.icaoId+o.obsTime)));
