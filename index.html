@@ -167,6 +167,26 @@
     .sbtn{padding:9px;margin:8px 0 4px;font-size:16px}
     #smap{height:200px}
   }
+  .mpanel{background:#0b57a8;color:#fff;border-radius:16px;padding:12px}
+  .mhead{display:flex;align-items:center;gap:6px;background:#0a4787;border-radius:12px;padding:6px}
+  .mhead select{background:#0a4787;color:#fff;border:none;font-weight:700;font-size:16px;flex:1;min-width:0}
+  .mhead select option{color:#000;background:#fff}
+  .mtime,.mage{padding:4px 8px;font-weight:600;border-left:1px solid #ffffff33;white-space:nowrap}
+  .mtiles{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+  .mtile{background:#0a4787;border-radius:12px;overflow:hidden;text-align:center}
+  .mtop{font-size:20px;font-weight:800;padding:8px 4px}
+  .mbot{font-size:13px;padding:8px 4px;opacity:.95}
+  .mcat{display:inline-block;padding:1px 8px;border-radius:6px;font-weight:700;color:#fff}
+  .mdials{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px}
+  .msvg{width:100%;height:auto;display:block}
+  .mcap{text-align:center;font-size:13px;opacity:.9;margin-top:-4px}
+  .mhist{margin-top:12px;background:#0a4787;border-radius:12px;padding:8px 10px}
+  .mh{font-size:12px;opacity:.8;margin-bottom:4px}
+  .mrow{display:grid;grid-template-columns:70px auto 1fr;gap:8px;align-items:center;padding:3px 0;font-size:14px}
+  .mrow .mw{padding:1px 8px;border-radius:6px;font-weight:700;justify-self:start}
+  .mraw{margin-top:10px;font-family:ui-monospace,monospace;font-size:12px;opacity:.85;word-break:break-word}
+  .mfoot{margin-top:8px;font-size:12px;opacity:.75}
+  .mempty{padding:30px 10px;text-align:center;opacity:.9}
   @media (max-width:560px){
     .now{grid-template-columns:1fr}
     .bigwind .num{font-size:40px}
@@ -194,11 +214,10 @@
     <div class="settings" id="settings">
       <label>Viento mínimo para navegar <input type="number" id="minw" min="5" max="40"> kn</label>
       <label>Máximo <input type="number" id="maxw" min="10" max="60"> kn</label>
-      <label><input type="checkbox" id="prudent" style="width:auto"> Modo prudente (el viento más fuerte entre 4 modelos)</label>
       <label><input type="checkbox" id="calibOn" style="width:auto"> Corrección local (aprende de lo medido en el aeropuerto)</label>
     </div>
   </div>
-  <nav class="vtabs wrap"><button class="vtab on" data-v="fc">Pronóstico</button><button class="vtab" data-v="map">Mapa</button><button class="vtab" data-v="sess">Sesión</button></nav>
+  <nav class="vtabs wrap"><button class="vtab on" data-v="fc">Pronóstico</button><button class="vtab" data-v="map">Mapa</button><button class="vtab" data-v="sess">Sesión</button><button class="vtab" data-v="metar">METAR</button></nav>
 </header>
 <div id="modal"><div class="box"></div></div>
 <section id="sessview" class="wrap" style="display:none;padding:12px 12px 40px">
@@ -221,6 +240,7 @@
     <div class="note">Las sesiones se guardan solo en este celular. Exportalas de vez en cuando como respaldo: si desinstalás la app o borrás los datos del navegador, se pierden.</div>
   </section>
 </section>
+<section id="metview" style="display:none"><div class="wrap" style="padding:12px 12px 40px"><div class="mpanel" id="metbody"></div></div></section>
 <section id="mapview" style="display:none">
   <div class="wmlegend" id="wmlegend"></div>
   <div id="wmwrap">
@@ -259,7 +279,6 @@ const state = {
   model: store.get("model","best_match"),
   minW: store.get("minW",14),
   maxW: store.get("maxW",35),
-  prudent: store.get("prudent",true),
   calibOn: store.get("calibOn",true),
   day: 0, data:null, view:"fc"
 };
@@ -320,29 +339,20 @@ async function load(){
     daily:"sunrise,sunset", wind_speed_unit:"kn", timezone:TZ, forecast_days:10, models:state.model
   }).forEach(([k,v])=>w.searchParams.set(k,v));
   try{
-    const [wr, mr, alt, metar, tafAll, hist] = await Promise.all([
+    const [wr, mr, metar, tafAll, hist] = await Promise.all([
       fetch(w).then(r=>{ if(!r.ok) throw new Error("viento "+r.status); return r.json(); }),
       spot.harm ? Promise.resolve(predictTide(spot)) : spot.tide==="auto" ? loadTideAuto(spot) : spot.tide ? loadTide(spot) : Promise.resolve(null),
-      loadAlt(spot), spot.metar ? loadMetar(spot.metar) : Promise.resolve(null),
-      spot.metar ? loadLocalJSON("taf.json") : Promise.resolve(null),
+      spot.metar ? loadMetar(spot.metar) : Promise.resolve(null),
+      spot.metar ? getTafData() : Promise.resolve(null),
       spot.metar ? loadLocalJSON("history.json") : Promise.resolve(null)
     ]);
     if(mr && !mr._harm && mr.hourly?.sea_level_height_msl){
       const v=mr.hourly.sea_level_height_msl, mn=Math.min(...v.filter(x=>x!=null));
       if(mn<0){ const off=Math.ceil(-mn*2)/2; mr.hourly.sea_level_height_msl=v.map(x=>x==null?null:x+off); mr._off=off; }
     }
-    // Modo prudente: en cada hora, el viento y las ráfagas más fuertes entre el modelo principal y los otros
-    wr._main = {s:wr.hourly.wind_speed_10m.slice(), g:wr.hourly.wind_gusts_10m.slice()};
-    if(state.prudent && alt){
-      wr.hourly.time.forEach((t,i)=>{ const k=alt.idx[t]; if(k==null) return;
-        if(alt.spd[k]!=null && alt.spd[k]>wr.hourly.wind_speed_10m[i]) wr.hourly.wind_speed_10m[i]=alt.spd[k];
-        if(alt.gst[k]!=null && alt.gst[k]>wr.hourly.wind_gusts_10m[i]) wr.hourly.wind_gusts_10m[i]=alt.gst[k];
-        if(wr.hourly.wind_gusts_10m[i]<wr.hourly.wind_speed_10m[i]) wr.hourly.wind_gusts_10m[i]=wr.hourly.wind_speed_10m[i]; });
-      wr._prudent=true;
-    }
     const calib = (spot.metar && hist) ? applyCalibration(wr, hist, spot.metar) : null;
     const taf = (spot.metar && Array.isArray(tafAll)) ? tafAll.filter(x=>x.icaoId===spot.metar).sort((a,b)=>(b.issueTime||0)-(a.issueTime||0))[0]||null : null;
-    state.data = {spot, w:wr, m:mr, alt, metar, taf, calib, loadedAt:new Date()};
+    state.data = {spot, w:wr, m:mr, metar, taf, calib, loadedAt:new Date()};
     render();
   }catch(e){
     $("#app").innerHTML = `<div class="err">No pude descargar el pronóstico (${e.message}). Revisá la conexión a internet y tocá ↻.</div>`;
@@ -359,7 +369,7 @@ const SECT = d => Math.round(((d%360)+360)%360/45)%8;   // 8 sectores: N, NE, E,
 const SECT_ES = ["norte","noreste","este","sudeste","sur","sudoeste","oeste","noroeste"];
 function median(a){ const b=a.slice().sort((x,y)=>x-y), n=b.length; return n? (n%2?b[(n-1)/2]:(b[n/2-1]+b[n/2])/2) : null; }
 function applyCalibration(wr, hist, code){
-  const key = wr._prudent ? "max" : state.model;
+  const key = state.model;
   const S = hist.filter(h=>h.st===code && h.os!=null && h.fc && h.fc[key]!=null && h.fc[key]>=4 && h.fd!=null);
   const info = {n:S.length, need:30, key, applied:false, sectors:{}};
   if(!state.calibOn){ info.off=true; return info; }
@@ -401,30 +411,9 @@ const dLocal = ts => { const d=new Date(ts*1000), n=new Date(); const same=d.toL
 async function loadMetar(code){
   if(!location.protocol.startsWith("http")) return null;
   try{
-    const r = await fetch("metar.json?t="+Date.now(), {cache:"no-store"}); if(!r.ok) return null;
-    const j = await r.json(); const arr = Array.isArray(j) ? j : (j.data||[]);
-    const obs = arr.filter(o=>o.icaoId===code).sort((a,b)=>(b.obsTime||0)-(a.obsTime||0))[0];
-    if(!obs || obs.wspd==null) return null;
-    const ageMin = Math.round((Date.now()/1000 - obs.obsTime)/60);
-    return {code, spd:+obs.wspd, gst:obs.wgst!=null?+obs.wgst:null, dir:obs.wdir, temp:obs.temp, raw:obs.rawOb, ageMin};
-  }catch(e){ return null; }
-}
-
-// Otros modelos (por detrás): el máximo de viento y ráfagas que prevé cualquiera de ellos
-const ALT_MODELS = {ecmwf_ifs025:"ECMWF", gfs_seamless:"GFS", icon_seamless:"ICON", gem_seamless:"GEM"};
-async function loadAlt(spot){
-  try{
-    const ms = Object.keys(ALT_MODELS).filter(m=>m!==state.model);
-    const u = new URL("https://api.open-meteo.com/v1/forecast");
-    Object.entries({latitude:spot.lat, longitude:spot.lon, hourly:"wind_speed_10m,wind_gusts_10m",
-      wind_speed_unit:"kn", timezone:TZ, forecast_days:10, models:ms.join(",")}).forEach(([k,v])=>u.searchParams.set(k,v));
-    const r = await fetch(u); if(!r.ok) return null; const j = await r.json(); if(j.error) return null;
-    const H=j.hourly, n=H.time.length, spd=Array(n).fill(null), gst=Array(n).fill(null), who=Array(n).fill(null);
-    ms.forEach(m=>{ const S=H["wind_speed_10m_"+m], G=H["wind_gusts_10m_"+m]; if(!S) return;
-      for(let i=0;i<n;i++){ if(S[i]!=null && (spd[i]==null || S[i]>spd[i])){ spd[i]=S[i]; who[i]=ALT_MODELS[m]; }
-        if(G && G[i]!=null && (gst[i]==null || G[i]>gst[i])) gst[i]=G[i]; } });
-    const idx={}; H.time.forEach((t,i)=>idx[t]=i);
-    return {idx, spd, gst, who};
+    const arr = await getMetarData(); if(!Array.isArray(arr)) return null;
+    MV.raw = arr; MV.fetchedAt = Date.now();
+    return parseMetar(arr, code);
   }catch(e){ return null; }
 }
 
@@ -552,7 +541,7 @@ function render(){
   // --- Ahora ---
   const fws=H.wind_speed_10m[nowIdx], fgs=H.wind_gusts_10m[nowIdx], fwd=H.wind_direction_10m[nowIdx];
   // Si hay METAR reciente (menos de 90 min), el "Ahora" muestra el viento MEDIDO, no el pronosticado
-  const M = state.data.metar, mFresh = !!(M && M.ageMin<=90);
+  const M = state.data.metar, mFresh = !!(M && M.ageMin<=150);
   const ws = mFresh ? M.spd : fws;
   const gs = mFresh ? Math.max(M.gst||0, M.spd) : fgs;
   const wd = mFresh && typeof M.dir==="number" ? M.dir : fwd;
@@ -590,7 +579,7 @@ function render(){
         <div class="arrowbig" style="background:${windColor(ws)}">${arrowSvg(wd,30,textOn(ws))}</div>
         <div><div class="num">${r0(ws)}<span class="unit"> kn</span></div>
         <div class="unit">ráfagas ${r0(gs)} kn · ${card(wd)} (${r0(wd)}°)</div>
-        <div class="src">${mFresh?`📡 Medido en el aeropuerto (${M.code}) hace ${M.ageMin} min · pronóstico: ${r0(fws)} kn`:`📈 Pronóstico${state.data.calib&&state.data.calib.applied?" corregido con lo medido":""}${state.data.w._prudent?" (modo prudente)":""}`}</div></div>
+        <div class="src">${mFresh?`📡 Medido en el aeropuerto (${M.code}) hace ${M.ageMin} min · pronóstico: ${r0(fws)} kn`:`📈 Pronóstico${state.data.calib&&state.data.calib.applied?" corregido con lo medido":""}`}</div></div>
       </div>
       <div class="nowgrid">
         <div class="stat"><div class="k">Temperatura</div><div class="v">${r0(H.temperature_2m[nowIdx])}°</div></div>
@@ -618,7 +607,6 @@ function render(){
         <span class="tw" style="background:${windColor(p.spd||0)};color:${textOn(p.spd||0)}">${p.spd!=null?r0(p.spd):"–"} kn${p.gst?` · ráf. ${r0(p.gst)}`:""}</span>
         <span class="td">${typeof p.dir==="number"?arrowSvg(p.dir,16)+" "+card(p.dir):(p.dir==="VRB"?"variable":"")}</span></div>`).join("")}</div>`:`<div class="note" style="margin:0">El TAF vigente no trae datos de viento para las próximas horas.</div>`}
       <details class="tafraw"><summary>Ver texto original${issued?` (emitido ${hLocal(issued)} h)`:""}</summary><code>${escH(T.rawTAF||"")}</code></details>
-      <div class="note">Lo arman los meteorólogos del aeropuerto para las próximas 24–30 h: conocen cómo sopla el viento acá.</div>
     </section>`;
   }
   html += "%%TIDE%%";
@@ -684,7 +672,6 @@ function render(){
   </table></div>
   <div class="legend">${[0,5,8,11,14,17,20,23,27,31,36,42].map(k=>`<span style="background:${windColor(k)};color:${textOn(k)}">${k}+</span>`).join("")}</div>
   ${state.data.calib?`<div class="note">📐 ${calibText(state.data.calib)}</div>`:""}
-  ${w._prudent?`<div class="note">Modo prudente: en cada hora se muestra el viento y las ráfagas más fuertes que prevé cualquiera de 4 modelos (ECMWF, GFS, ICON, GEM). Se desactiva en ⚙︎.</div>`:""}
   <div class="note">☀️ Sale ${hhmm(w.daily.sunrise[state.day])} · se pone ${hhmm(w.daily.sunset[state.day])} h. Las horas de noche se ven más claras.</div>
   </section>`;
 
@@ -761,8 +748,7 @@ function addSpot(sp){
 function selectSpot(id){ state.spot=id; store.set("spot",id); state.day=0; fillSpots(); load(); if(WM.map){ drawSpotMarkers(); const sp=allSpots().find(s=>s.id===id); if(sp && state.view==="map") WM.map.setView([sp.lat,sp.lon],9); } }
 fillSpots();
 $("#model").value=state.model;
-$("#minw").value=state.minW; $("#maxw").value=state.maxW; $("#prudent").checked=state.prudent;
-$("#prudent").onchange=e=>{ state.prudent=e.target.checked; store.set("prudent",state.prudent); load(); };
+$("#minw").value=state.minW; $("#maxw").value=state.maxW;
 $("#calibOn").checked=state.calibOn;
 $("#calibOn").onchange=e=>{ state.calibOn=e.target.checked; store.set("calibOn",state.calibOn); load(); };
 spotSel.onchange=e=>{
@@ -831,6 +817,8 @@ function setView(v){
   $("#app").style.display = v==="fc"?"":"none";
   $("#mapview").style.display = v==="map"?"":"none";
   $("#sessview").style.display = v==="sess"?"":"none";
+  $("#metview").style.display = v==="metar"?"":"none";
+  if(v==="metar") openMetarTab();
   if(v==="map"){ fitMapHeight(); openMap(); } else stopAnim();
   if(v==="sess") openSession();
   if(v==="fc" && state.data) render();
@@ -1184,6 +1172,137 @@ ${pts}
   saveFile(`windsurf_${fileDate(s.start)}.gpx`, gpx, "application/gpx+xml");
 }
 
+// ================== PESTAÑA METAR ==================
+const MV = {code:null, raw:null, fetchedAt:0, timer:null};
+const STATIONS_MV = {SAWH:"Ushuaia", SAWE:"Río Grande"};
+function parseMetar(arr, code){
+  if(!Array.isArray(arr)) return null;
+  const obs = arr.filter(o=>o.icaoId===code).sort((a,b)=>(b.obsTime||0)-(a.obsTime||0))[0];
+  if(!obs || obs.wspd==null) return null;
+  return {code, spd:+obs.wspd, gst:obs.wgst!=null?+obs.wgst:null, dir:obs.wdir, temp:obs.temp, raw:obs.rawOb,
+          obsTime:obs.obsTime, ageMin:Math.round((Date.now()/1000-obs.obsTime)/60)};
+}
+// Plan B: si el METAR guardado por GitHub está viejo (más de 75 min), pedirlo en vivo a través de un intermediario público
+const AW_URL = "https://aviationweather.gov/api/data/metar?ids=SAWH,SAWE&format=json&hours=3";
+const AW_TAF = "https://aviationweather.gov/api/data/taf?ids=SAWH,SAWE&format=json";
+const PROXIES = [u=>"https://corsproxy.io/?url="+encodeURIComponent(u), u=>"https://api.allorigins.win/raw?url="+encodeURIComponent(u)];
+async function fetchMetarLive(url){
+  for(const px of PROXIES){
+    try{
+      const ctl=new AbortController(); const tm=setTimeout(()=>ctl.abort(),8000);
+      const r=await fetch(px(url||AW_URL),{cache:"no-store",signal:ctl.signal}); clearTimeout(tm);
+      if(!r.ok) continue; const j=await r.json();
+      if(Array.isArray(j) && j.length && j[0].icaoId) return j;
+    }catch(e){}
+  }
+  return null;
+}
+async function getTafData(){
+  let j = await loadLocalJSON("taf.json");
+  const issued = a => Array.isArray(a)&&a.length ? Math.max(...a.map(t=>typeof t.issueTime==="number"?t.issueTime*1000:Date.parse(t.issueTime)||0)) : 0;
+  if(Date.now()-issued(j) > 4*3600*1000){ const live = await fetchMetarLive(AW_TAF); if(live && issued(live) > issued(j)) j = live; }
+  return j;
+}
+function newestAgeMin(arr){ if(!Array.isArray(arr)||!arr.length) return Infinity; return (Date.now()/1000-Math.max(...arr.map(o=>o.obsTime||0)))/60; }
+async function getMetarData(){
+  let j = await loadLocalJSON("metar.json");
+  if(newestAgeMin(j) > 75){ const live = await fetchMetarLive(); if(live && newestAgeMin(live) < newestAgeMin(j)) j = live; }
+  return j;
+}
+
+// Revisa si hay METAR nuevo; si cambió, actualiza "Ahora" y la pestaña METAR sin que el usuario toque nada
+async function refreshMetar(){
+  const j = await getMetarData();
+  if(j){ MV.raw=j; MV.fetchedAt=Date.now(); }
+  if(state.data && state.data.spot.metar && MV.raw){
+    const m = parseMetar(MV.raw, state.data.spot.metar);
+    const old = state.data.metar;
+    if(m && (!old || old.obsTime!==m.obsTime)){ state.data.metar=m; if(state.view==="fc") render(); }
+    else if(m && old){ old.ageMin=m.ageMin; }
+  }
+  if(state.view==="metar") renderMetarTab();
+}
+function startAutoRefresh(){
+  clearInterval(MV.timer);
+  MV.timer = setInterval(()=>{ if(document.visibilityState==="visible") refreshMetar(); }, 3*60*1000);   // cada 3 minutos
+  setInterval(()=>{ if(document.visibilityState==="visible") load(); }, 60*60*1000);                      // pronóstico: cada 1 hora
+  setInterval(()=>{ if(state.view==="metar") renderMetarTab(); }, 60*1000);                              // reloj "hace X min"
+}
+document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") refreshMetar(); });
+
+const CLOUD_ES = {FEW:"Pocas nubes", SCT:"Nubes dispersas", BKN:"Muy nublado", OVC:"Cubierto", CLR:"Despejado", SKC:"Despejado", NSC:"Sin nubes bajas", CAVOK:"CAVOK"};
+function visKm(v){ if(v==null) return "–"; if(typeof v==="string" && v.includes("+")) return "10 km+"; const mi=parseFloat(v); if(isNaN(mi)) return v; return mi>=6?"10 km+":(mi*1.609).toFixed(1).replace(".",",")+" km"; }
+function fmtFt(ft){ const m=Math.round(ft*0.3048/10)*10; return m.toLocaleString("es-AR")+" m"; }
+
+function compassSvg(dir, spd){
+  const C=110, R=96; let s=`<svg viewBox="0 0 220 220" class="msvg" role="img" aria-label="Dirección del viento">`;
+  s+=`<circle cx="${C}" cy="${C}" r="${R}" fill="none" stroke="#ffffff33" stroke-width="2"/>`;
+  for(let a=0;a<360;a+=5){ const long=a%30===0, r1=long?R-12:R-6, rad=(a-90)*Math.PI/180;
+    s+=`<line x1="${C+R*Math.cos(rad)}" y1="${C+R*Math.sin(rad)}" x2="${C+r1*Math.cos(rad)}" y2="${C+r1*Math.sin(rad)}" stroke="#ffffff${long?"cc":"55"}" stroke-width="${long?2:1}"/>`; }
+  const lab={0:"N",90:"E",180:"S",270:"O"};
+  for(let a=0;a<360;a+=30){ const rad=(a-90)*Math.PI/180, r=R-26, t=lab[a]||String(a/10);
+    s+=`<text x="${C+r*Math.cos(rad)}" y="${C+r*Math.sin(rad)+6}" text-anchor="middle" font-size="${lab[a]?20:14}" font-weight="${lab[a]?700:500}" fill="#ffffff${lab[a]?"":"bb"}">${t}</text>`; }
+  if(typeof dir==="number" && spd>0){
+    s+=`<g transform="rotate(${dir} ${C} ${C})"><line x1="${C}" y1="${C-R+4}" x2="${C}" y2="${C+46}" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
+        <path d="M${C} ${C+64} L${C-13} ${C+38} L${C+13} ${C+38} Z" fill="#fff"/></g>`;
+  } else {
+    s+=`<text x="${C}" y="${C+6}" text-anchor="middle" font-size="18" fill="#fff">${spd>0?"Variable":"Calma"}</text>`;
+  }
+  return s+`</svg>`;
+}
+function gaugeSvg(spd, gst){
+  const C=110, R=88, MAX=45, a0=-120, a1=120;
+  const ang = v => a0 + (a1-a0)*Math.min(v,MAX)/MAX;
+  const pt = (a,r) => { const rad=(a-90)*Math.PI/180; return [C+r*Math.cos(rad), C+r*Math.sin(rad)]; };
+  const arc = (v1,v2,r) => { const [x1,y1]=pt(ang(v1),r), [x2,y2]=pt(ang(v2),r), large=(ang(v2)-ang(v1))>180?1:0; return `M${x1} ${y1} A${r} ${r} 0 ${large} 1 ${x2} ${y2}`; };
+  let s=`<svg viewBox="0 0 220 220" class="msvg" role="img" aria-label="Velocidad del viento">`;
+  for(let v=0; v<MAX; v+=1) s+=`<path d="${arc(v,v+1.05,R)}" stroke="${windColor(v)}" stroke-width="12" fill="none"/>`;
+  for(let v=0; v<=MAX; v+=5){ const [x1,y1]=pt(ang(v),R-10), [x2,y2]=pt(ang(v),R-18), [tx,ty]=pt(ang(v),R-32);
+    s+=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#ffffffcc" stroke-width="2"/><text x="${tx}" y="${ty+5}" text-anchor="middle" font-size="13" fill="#ffffffcc">${v}</text>`; }
+  if(gst){ const [gx,gy]=pt(ang(gst),R+10), [gx2,gy2]=pt(ang(gst),R-8); s+=`<line x1="${gx}" y1="${gy}" x2="${gx2}" y2="${gy2}" stroke="#f28c0f" stroke-width="5" stroke-linecap="round"/>`; }
+  const [nx,ny]=pt(ang(spd),R-14);
+  s+=`<line x1="${C}" y1="${C}" x2="${nx}" y2="${ny}" stroke="#fff" stroke-width="5" stroke-linecap="round"/><circle cx="${C}" cy="${C}" r="9" fill="#fff"/>`;
+  s+=`<text x="${C}" y="${C+50}" text-anchor="middle" font-size="34" font-weight="800" fill="#fff">${Math.round(spd)}</text><text x="${C}" y="${C+70}" text-anchor="middle" font-size="13" fill="#ffffffcc">nudos</text>`;
+  return s+`</svg>`;
+}
+async function openMetarTab(){
+  if(!MV.code) MV.code = (state.data && state.data.spot.metar) || "SAWH";
+  renderMetarTab();
+  await refreshMetar();
+}
+function renderMetarTab(){
+  const el=$("#metbody"); if(!el) return;
+  const sel = Object.entries(STATIONS_MV).map(([k,v])=>`<option value="${k}" ${k===MV.code?"selected":""}>${v}</option>`).join("");
+  const list = Array.isArray(MV.raw) ? MV.raw.filter(o=>o.icaoId===MV.code).sort((a,b)=>b.obsTime-a.obsTime) : [];
+  const o = list[0];
+  if(!o){ el.innerHTML = `<div class="mhead"><select id="mvsel">${sel}</select></div><div class="mempty">${location.protocol.startsWith("http")?"Todavía no hay METAR disponible para este aeropuerto.":"El METAR se ve cuando la app está publicada en GitHub."}</div>`; $("#mvsel").onchange=e=>{MV.code=e.target.value; renderMetarTab();}; return; }
+  const age = Math.round((Date.now()/1000-o.obsTime)/60);
+  const hora = new Date(o.obsTime*1000).toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit",hourCycle:"h23",timeZone:"America/Argentina/Ushuaia"});
+  const dirTxt = typeof o.wdir==="number" ? `${o.wdir}° · ${card(o.wdir)}` : (o.wdir==="VRB"?"variable":"–");
+  const cl = (o.clouds||[]).filter(c=>c.cover);
+  const cloudTxt = cl.length ? `${CLOUD_ES[cl[0].cover]||cl[0].cover}${cl[0].base?` a ${fmtFt(cl[0].base)}`:""}` : (o.cover && CLOUD_ES[o.cover] ? CLOUD_ES[o.cover] : "Sin datos");
+  const cat = o.fltCat||""; const catC={VFR:"#2ea043",MVFR:"#2f81f7",IFR:"#e5534b",LIFR:"#c94bd6"}[cat]||"#57606a";
+  const tile=(top,topBg,topFg,bottom)=>`<div class="mtile"><div class="mtop" style="background:${topBg};color:${topFg}">${top}</div><div class="mbot">${bottom}</div></div>`;
+  const checkedAgo = MV.fetchedAt ? Math.max(0,Math.round((Date.now()-MV.fetchedAt)/60000)) : null;
+  el.innerHTML = `
+    <div class="mhead"><select id="mvsel">${sel}</select><div class="mtime">${hora} h</div><div class="mage">hace ${age>=60?Math.floor(age/60)+" h "+(age%60)+" min":age+" min"}</div></div>
+    <div class="mtiles">
+      ${tile(`${Math.round(o.wspd)} kt`, windColor(o.wspd), textOn(o.wspd), dirTxt)}
+      ${tile(o.wgst?`${Math.round(o.wgst)} kt`:"–", o.wgst?windColor(o.wgst):"#1d4f8f", o.wgst?textOn(o.wgst):"#fff", "Ráfagas")}
+      ${tile(`${o.temp!=null?Math.round(o.temp):"–"} °C`, "#1d4f8f", "#fff", `rocío ${o.dewp!=null?Math.round(o.dewp)+"°":"–"}`)}
+      ${tile(visKm(o.visib), "#2ea043", "#fff", "Visibilidad")}
+      ${tile(cloudTxt.split(" a ")[0], "#1d4f8f", "#fff", cl[0]&&cl[0].base?`base ${fmtFt(cl[0].base)}`:"Nubes")}
+      ${tile(`${o.altim!=null?Math.round(o.altim):"–"} hPa`, "#1d4f8f", "#fff", cat?`<span class="mcat" style="background:${catC}">${cat}</span>`:"Presión")}
+    </div>
+    <div class="mdials"><div>${compassSvg(o.wdir, o.wspd)}<div class="mcap">Desde ${dirTxt}</div></div><div>${gaugeSvg(o.wspd, o.wgst)}<div class="mcap">${o.wgst?`ráfagas ${Math.round(o.wgst)} kt`:"sin ráfagas"}</div></div></div>
+    ${list.length>1?`<div class="mhist"><div class="mh">Últimas observaciones</div>${list.slice(0,6).map(x=>{const h=new Date(x.obsTime*1000).toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit",hourCycle:"h23",timeZone:"America/Argentina/Ushuaia"});
+      return `<div class="mrow"><span>${h} h</span><span class="mw" style="background:${windColor(x.wspd)};color:${textOn(x.wspd)}">${Math.round(x.wspd)}${x.wgst?`G${Math.round(x.wgst)}`:""} kt</span><span>${typeof x.wdir==="number"?arrowSvg(x.wdir,16,"#fff")+" "+card(x.wdir):"VRB"}</span></div>`;}).join("")}</div>`:""}
+    <div class="mraw">${escH(o.rawOb||"")}</div>
+    <div class="mfoot">Se actualiza solo: la app revisa cada 3 min${checkedAgo!=null?` · última revisión hace ${checkedAgo} min`:""}.</div>`;
+  $("#mvsel").onchange=e=>{ MV.code=e.target.value; renderMetarTab(); };
+}
+
+startAutoRefresh();
 let rz; window.addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(()=>{if(state.data && state.view==="fc")render();},200);});
 load();
 if("serviceWorker" in navigator && location.protocol.startsWith("http")){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
