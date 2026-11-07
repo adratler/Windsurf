@@ -1,0 +1,76 @@
+name: Bajar METAR
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  metar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bajar METAR, TAF y guardar historial
+        run: |
+          python3 - <<'PY'
+          import json, os, time, urllib.request, urllib.parse
+          UA = {"User-Agent": "windsurf-ushuaia-app"}
+          def get(url):
+              req = urllib.request.Request(url, headers=UA)
+              with urllib.request.urlopen(req, timeout=40) as r:
+                  return json.load(r)
+          AW = "https://aviationweather.gov/api/data/"
+          # Punto del pronóstico de cada aeropuerto (el mismo que usa la app)
+          STATIONS = {"SAWH": (-54.843, -68.296), "SAWE": (-53.785, -67.68)}
+          MODELS = ["best_match", "ecmwf_ifs025", "gfs_seamless", "icon_seamless", "gem_seamless"]
+          metar = []
+          try:
+              metar = get(AW + "metar?ids=SAWH,SAWE&format=json&hours=3")
+              if isinstance(metar, list) and metar:
+                  json.dump(metar, open("metar.json", "w"))
+          except Exception as e:
+              print("METAR:", e)
+          try:
+              taf = get(AW + "taf?ids=SAWH,SAWE&format=json")
+              if isinstance(taf, list) and taf:
+                  json.dump(taf, open("taf.json", "w"))
+          except Exception as e:
+              print("TAF:", e)
+          # Historial: lo medido junto a lo que decía cada modelo para esa hora
+          hist = []
+          if os.path.exists("history.json"):
+              try: hist = json.load(open("history.json"))
+              except Exception: hist = []
+          have = {(h["st"], h["t"]) for h in hist}
+          for st, (la, lo) in STATIONS.items():
+              obs = [o for o in (metar or []) if o.get("icaoId") == st and o.get("wspd") is not None and o.get("obsTime")]
+              if not obs: continue
+              o = max(obs, key=lambda x: x["obsTime"])
+              if (st, o["obsTime"]) in have: continue
+              try:
+                  q = urllib.parse.urlencode({"latitude": la, "longitude": lo, "hourly": "wind_speed_10m,wind_direction_10m",
+                      "models": ",".join(MODELS), "wind_speed_unit": "kn", "timezone": "GMT", "past_days": 1, "forecast_days": 1})
+                  f = get("https://api.open-meteo.com/v1/forecast?" + q)["hourly"]
+                  hour = time.strftime("%Y-%m-%dT%H:00", time.gmtime(round(o["obsTime"] / 3600) * 3600))
+                  if hour not in f["time"]: continue
+                  i = f["time"].index(hour)
+                  fc = {m: f.get("wind_speed_10m_" + m, [None] * (i + 1))[i] for m in MODELS}
+                  vals = [v for v in fc.values() if v is not None]
+                  if not vals: continue
+                  fc["max"] = max(vals)
+                  fd = f.get("wind_direction_10m_best_match", [None] * (i + 1))[i]
+                  od = o.get("wdir") if isinstance(o.get("wdir"), (int, float)) else None
+                  hist.append({"st": st, "t": o["obsTime"], "os": o["wspd"], "og": o.get("wgst"), "od": od, "fd": fd, "fc": fc})
+              except Exception as e:
+                  print("Historial", st, e)
+          cut = time.time() - 150 * 86400
+          hist = [h for h in hist if h["t"] >= cut]
+          json.dump(hist, open("history.json", "w"), separators=(",", ":"))
+          print("Historial:", len(hist), "mediciones")
+          PY
+      - name: Guardar
+        run: |
+          git config user.name "metar-bot"
+          git config user.email "metar-bot@users.noreply.github.com"
+          for f in metar.json taf.json history.json; do if [ -f "$f" ]; then git add "$f"; fi; done
+          git diff --cached --quiet || (git commit -m "METAR actualizado" && git push)
