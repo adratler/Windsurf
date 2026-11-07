@@ -50,6 +50,30 @@
   .tafp .tw{padding:2px 8px;border-radius:6px;font-weight:700}
   .tafp .td{color:var(--muted);display:flex;align-items:center;gap:4px}
   .tafraw{margin-top:8px;font-size:12px;color:var(--muted)} .tafraw code{display:block;white-space:pre-wrap;margin-top:4px}
+  .hero{position:relative;border-radius:16px;padding:16px 14px 14px;text-align:center;margin-bottom:10px;border:1px solid var(--line);background:var(--card)}
+  .hero.good{background:rgba(31,157,85,.12);border-color:rgba(31,157,85,.45)}
+  .hero.warnh{background:rgba(242,140,15,.14);border-color:rgba(242,140,15,.55)}
+  .hero.bad{background:rgba(232,67,60,.12);border-color:rgba(232,67,60,.5)}
+  .hero.calm{background:var(--card)}
+  .hero .hk{font-size:13px;color:var(--muted)}
+  .hero .ht{font-size:22px;font-weight:700;margin-top:2px}
+  .hero.good .ht{color:var(--ok)} .hero.warnh .ht{color:#d97706} .hero.bad .ht{color:#e8433c} .hero.calm .ht{color:var(--muted)}
+  .hero .hw{display:flex;justify-content:center;align-items:baseline;gap:8px;margin-top:6px}
+  .hero .hn{font-size:60px;font-weight:800;line-height:1} .hero .hu{font-size:17px;color:var(--muted)}
+  .hero .hg{font-size:16px;margin-top:2px}
+  .hero .hnext{font-size:14px;margin-top:8px;font-weight:600}
+  .hero .hs{font-size:12px;color:var(--muted);margin-top:8px}
+  .hero .speak{position:absolute;top:10px;right:10px;margin:0;padding:4px 8px}
+  .minis{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0}
+  .mini{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+  .mini .k{font-size:12px;color:var(--muted)} .mini .v{font-size:20px;font-weight:700}
+  details.fold{background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:8px}
+  details.fold>summary{list-style:none;cursor:pointer;padding:13px 14px;font-weight:600;display:flex;justify-content:space-between;align-items:center}
+  details.fold>summary::-webkit-details-marker{display:none}
+  details.fold>summary::after{content:"▸";color:var(--muted);transition:transform .15s}
+  details.fold[open]>summary::after{transform:rotate(90deg)}
+  details.fold .fbody{padding:0 12px 12px}
+  .cfginfo{flex-basis:100%;font-size:12px;opacity:.85;display:flex;flex-direction:column;gap:4px;margin-top:4px}
   .bigwind{display:flex;align-items:center;gap:12px}
   .bigwind .num{font-size:46px;font-weight:700;line-height:1}
   .bigwind .unit{font-size:14px;color:var(--muted)}
@@ -196,6 +220,7 @@
       <label>Máximo <input type="number" id="maxw" min="10" max="60"> kn</label>
       <label><input type="checkbox" id="prudent" style="width:auto"> Modo prudente (el viento más fuerte entre 4 modelos)</label>
       <label><input type="checkbox" id="calibOn" style="width:auto"> Corrección local (aprende de lo medido en el aeropuerto)</label>
+      <div id="cfginfo" class="cfginfo"></div>
     </div>
   </div>
   <nav class="vtabs wrap"><button class="vtab on" data-v="fc">Pronóstico</button><button class="vtab" data-v="map">Mapa</button><button class="vtab" data-v="sess">Sesión</button></nav>
@@ -261,6 +286,7 @@ const state = {
   maxW: store.get("maxW",35),
   prudent: store.get("prudent",true),
   calibOn: store.get("calibOn",true),
+  folds: store.get("folds",{}),
   day: 0, data:null, view:"fc"
 };
 
@@ -585,64 +611,105 @@ function render(){
 
   state.speech = buildSpeech({spot,ws,gs,wd,t:H.temperature_2m[nowIdx],at:H.apparent_temperature[nowIdx],
     trend:tideTrend, nextExt, ok:ok(ws), tooMuch:ws>state.maxW, H, times, days, measured:mFresh, gapWarn:mFresh&&Math.abs(gap)>=8, fws});
-  let html = `<section class="card"><h2 style="display:flex;align-items:center;gap:8px">Ahora · ${escH(spot.name)}<button class="speak" id="speakbtn" title="Escuchar el pronóstico" aria-label="Escuchar el pronóstico">🔊 Escuchar</button></h2>
-    <div class="now">
-      <div class="bigwind">
-        <div class="arrowbig" style="background:${windColor(ws)}">${arrowSvg(wd,30,textOn(ws))}</div>
-        <div><div class="num">${r0(ws)}<span class="unit"> kn</span></div>
-        <div class="unit">ráfagas ${r0(gs)} kn · ${card(wd)} (${r0(wd)}°)</div>
-        <div class="src">${mFresh?`📡 Medido en el aeropuerto (${M.code}) hace ${M.ageMin} min · pronóstico: ${r0(fws)} kn`:`📈 Pronóstico${state.data.calib&&state.data.calib.applied?" corregido con lo medido":""}${state.data.w._prudent?" (modo prudente)":""}`}</div></div>
-      </div>
-      <div class="nowgrid">
-        <div class="stat"><div class="k">Temperatura</div><div class="v">${r0(H.temperature_2m[nowIdx])}°</div></div>
-        <div class="stat"><div class="k">Sensación térmica</div><div class="v">${r0(H.apparent_temperature[nowIdx])}°</div></div>
-        ${tideH?`<div class="stat"><div class="k">Marea</div><div class="v">${tideNow} <span style="font-size:13px;color:var(--muted)">${tideTrend}</span></div></div>`:""}
-        ${nextExt.map(e=>`<div class="stat"><div class="k">${e.hi?"Próxima pleamar":"Próxima bajamar"}</div><div class="v">${hhmm(e.t)} h · ${e.v.toFixed(1)} m</div></div>`).join("")}
-      </div>
-    </div>
-    ${mFresh && Math.abs(gap)>=8 ? `<div class="warn">⚠️ El viento real (${r0(M.spd)} kn${M.gst?`, ráfagas ${r0(M.gst)}`:""}) es muy distinto del pronóstico (${r0(fws)} kn). Hoy el pronóstico no es confiable: guiate por lo medido.</div>`:""}
-    ${M && !mFresh ? `<div class="note">Último METAR del aeropuerto: hace ${M.ageMin>=120?Math.round(M.ageMin/60)+" h":M.ageMin+" min"} (desactualizado).</div>`:""}
-    <div class="verdict" style="background:${verdict.bg};color:${verdict.fg}">${verdict.txt}${nextWin?`<div style="font-weight:500;margin-top:3px">${nextWin}</div>`:""}</div>
-    ${spot.metar?`<a class="metarlink" href="https://metar-taf.com/es/metar/${spot.metar}" target="_blank" rel="noopener">📡 Ver METAR completo del aeropuerto (${spot.metar}) ↗</a>`:""}
-  </section>`;
+  // ======== Pantalla simplificada: lo importante arriba, el resto plegado ========
+  const fold = (key, title, body, extra="") => `<details class="fold" data-f="${key}" ${state.folds[key]?"open":""}><summary>${title}${extra}</summary><div class="fbody">${body}</div></details>`;
 
-  // --- TAF del aeropuerto ---
+  // --- TAF (se calcula antes para poder avisar arriba) ---
   const T = state.data.taf;
+  let tafMax=0, modMax=0, tafBody="";
   if(T){
     const P = tafPeriods(T);
     const issued = T.issueTime ? (typeof T.issueTime==="number" ? T.issueTime : Date.parse(T.issueTime)/1000) : null;
-    // ¿el TAF prevé bastante más viento que el modelo en las próximas 12 h?
-    let tafMax=0, modMax=0; const lim=Date.now()/1000+12*3600;
+    const lim=Date.now()/1000+12*3600;
     P.forEach(p=>{ if(p.from<lim){ tafMax=Math.max(tafMax, p.spd||0); } });
     times.forEach((t,i)=>{ const ts=Date.parse(t+":00-03:00")/1000; if(ts>=Date.now()/1000-3600 && ts<lim) modMax=Math.max(modMax,H.wind_speed_10m[i]); });
-    html += `<section class="card"><h2>Pronóstico del aeropuerto (TAF ${spot.metar})</h2>
-      ${tafMax>=modMax+8?`<div class="warn" style="margin:0 0 10px">⚠️ Los meteorólogos del aeropuerto prevén hasta ${r0(tafMax)} kn en las próximas horas; el modelo dice ${r0(modMax)}. Tomá en cuenta el TAF.</div>`:""}
-      ${P.length?`<div class="tafl">${P.map(p=>`<div class="tafp"><span class="tt">${dLocal(p.from)}${hLocal(p.from)}–${hLocal(p.to)} h${p.tag?` <em>${p.tag}</em>`:""}</span>
+    tafBody = (P.length?`<div class="tafl">${P.map(p=>`<div class="tafp"><span class="tt">${dLocal(p.from)}${hLocal(p.from)}–${hLocal(p.to)} h${p.tag?` <em>${p.tag}</em>`:""}</span>
         <span class="tw" style="background:${windColor(p.spd||0)};color:${textOn(p.spd||0)}">${p.spd!=null?r0(p.spd):"–"} kn${p.gst?` · ráf. ${r0(p.gst)}`:""}</span>
-        <span class="td">${typeof p.dir==="number"?arrowSvg(p.dir,16)+" "+card(p.dir):(p.dir==="VRB"?"variable":"")}</span></div>`).join("")}</div>`:`<div class="note" style="margin:0">El TAF vigente no trae datos de viento para las próximas horas.</div>`}
-      <details class="tafraw"><summary>Ver texto original${issued?` (emitido ${hLocal(issued)} h)`:""}</summary><code>${escH(T.rawTAF||"")}</code></details>
-      <div class="note">Lo arman los meteorólogos del aeropuerto para las próximas 24–30 h: conocen cómo sopla el viento acá.</div>
-    </section>`;
+        <span class="td">${typeof p.dir==="number"?arrowSvg(p.dir,16)+" "+card(p.dir):(p.dir==="VRB"?"variable":"")}</span></div>`).join("")}</div>`
+      :`<div class="note" style="margin:0">El TAF vigente no trae datos de viento para las próximas horas.</div>`)
+      + `<div class="note">Lo arman los meteorólogos del aeropuerto${issued?` (emitido ${hLocal(issued)} h)`:""}.</div>
+      <details class="tafraw"><summary>Ver texto original</summary><code>${escH(T.rawTAF||"")}</code></details>`;
   }
-  html += "%%TIDE%%";
-  // --- Días ---
-  html += `<section class="card"><h2>Próximos días (horas de luz)</h2><div class="days">`;
+  if(spot.metar){
+    tafBody += `${M && !mFresh ? `<div class="note">Último METAR: hace ${M.ageMin>=120?Math.round(M.ageMin/60)+" h":M.ageMin+" min"} (desactualizado).</div>`:""}
+      <a class="metarlink" href="https://metar-taf.com/es/metar/${spot.metar}" target="_blank" rel="noopener">📡 Ver METAR completo (${spot.metar}) ↗</a>`;
+  }
+
+  // --- Recuadro principal ---
+  const tooMuch = ws>state.maxW, gusty = ok(ws) && gs>state.maxW;
+  const st = tooMuch ? {cls:"bad", t:"Demasiado viento"}
+           : gusty ? {cls:"warnh", t:"Navegable, con ráfagas fuertes"}
+           : ok(ws) ? {cls:"good", t:"Bueno para navegar"}
+           : {cls:"calm", t:"Poco viento"};
+  const shortName = spot.name.replace(/\s*\(.*?\)/,"").replace("📍","").trim();
+  let hero = `<section class="hero ${st.cls}">
+    <button class="speak" id="speakbtn" title="Escuchar" aria-label="Escuchar el pronóstico">🔊</button>
+    <div class="hk">Ahora en ${escH(shortName)}</div>
+    <div class="ht">${st.t}</div>
+    <div class="hw"><span class="hn">${r0(ws)}</span><span class="hu">kn del ${card(wd)}</span></div>
+    <div class="hg">ráfagas ${r0(gs)} kn</div>
+    ${!ok(ws) && !tooMuch && state.nextWinI!=null ? `<div class="hnext">Próxima ventana: ${fmtDay(times[state.nextWinI].slice(0,10),days.indexOf(times[state.nextWinI].slice(0,10))).toLowerCase()} ${times[state.nextWinI].slice(11,13)} h · ${r0(H.wind_speed_10m[state.nextWinI])} kn</div>`:""}
+    <div class="hs">${mFresh?`medido en el aeropuerto hace ${M.ageMin} min`:"pronóstico"}</div>
+  </section>`;
+  // avisos: solo si hay algo importante
+  const warns=[];
+  if(mFresh && Math.abs(gap)>=8) warns.push(`El pronóstico decía ${r0(fws)} kn: hoy guiate por lo medido.`);
+  if(T && tafMax>=Math.max(modMax, mFresh?M.spd:0)+8) warns.push(`El aeropuerto prevé hasta ${r0(tafMax)} kn en las próximas horas.`);
+  hero += warns.map(t=>`<div class="warn">⚠️ ${t}</div>`).join("");
+  // dos datos más
+  const nx = nextExt[0];
+  hero += `<div class="minis">
+    ${tideH?`<div class="mini"><div class="k">Marea</div><div class="v">${tideNow.replace(".",",")} ${tideTrend.includes("subiendo")?"↑":"↓"}</div>${nx?`<div class="k">${nx.hi?"pleamar":"bajamar"} ${hhmm(nx.t)}</div>`:""}</div>`
+          :`<div class="mini"><div class="k">Temperatura</div><div class="v">${r0(H.temperature_2m[nowIdx])}°</div></div>`}
+    <div class="mini"><div class="k">Sensación</div><div class="v">${r0(H.apparent_temperature[nowIdx])}°</div><div class="k">temp. ${r0(H.temperature_2m[nowIdx])}°</div></div>
+  </div>`;
+
+  // --- Secciones plegables ---
+  let folds = "";
+  if(spot.metar) folds += fold("taf","Pronóstico del aeropuerto", tafBody || `<div class="note" style="margin:0">Todavía no hay TAF disponible.</div>`);
+
+  const dSel = days[state.day];
+  const sr=minsOf(w.daily.sunrise[state.day]), ss=minsOf(w.daily.sunset[state.day]);
+  const idx = times.map((t,i)=>i).filter(i=>times[i].slice(0,10)===dSel && +times[i].slice(11,13)>=5 && +times[i].slice(11,13)<=23);
+  const isNight = i => { const mm=minsOf(times[i]); return mm<sr-30||mm>ss+30; };
+  const cls = i => (isNight(i)?"night ":"")+(i===nowIdx?"tnow":"");
+  const row = (label, f, extra="") => `<tr ${extra}><th class="rowh">${label}</th>${idx.map(i=>f(i)).join("")}</tr>`;
+  folds += fold("hora", `Hora por hora · ${fmtDay(dSel,state.day)}`, `<div class="tblwrap"><table>
+    ${row("Hora", i=>`<td class="${cls(i)}">${times[i].slice(11,13)}</td>`, 'class="hr"')}
+    ${row("Viento kn", i=>{const v=H.wind_speed_10m[i]; return `<td class="wv ${cls(i)}" style="background:${windColor(v)};color:${textOn(v)}">${r0(v)}</td>`})}
+    ${row("Ráfagas kn", i=>{const v=H.wind_gusts_10m[i]; return `<td class="wv ${cls(i)}" style="background:${windColor(v)};color:${textOn(v)}">${r0(v)}</td>`})}
+    ${row("Dirección", i=>`<td class="${cls(i)}">${arrowSvg(H.wind_direction_10m[i])}<div style="font-size:11px">${card(H.wind_direction_10m[i])}</div></td>`)}
+    ${row("Temp °C", i=>`<td class="${cls(i)}">${r0(H.temperature_2m[i])}</td>`)}
+    ${row("Lluvia mm", i=>{const p=H.precipitation[i]; return `<td class="${cls(i)}" style="color:${p>0?"#3b8fd9":"var(--muted)"}">${p>0?p.toFixed(1):"·"}</td>`})}
+    ${tideH?row("Marea m", i=>{const v=tideAt(times[i]); return `<td class="${cls(i)}">${v==null?"–":v.toFixed(1)}</td>`}):""}
+  </table></div>
+  <div class="note">☀️ ${hhmm(w.daily.sunrise[state.day])} a ${hhmm(w.daily.sunset[state.day])} h. Para ver otro día, tocalo en "Próximos días".</div>`);
+
+  let dcards = `<div class="days">`;
   days.forEach((d,di)=>{
-    const sr=minsOf(w.daily.sunrise[di]), ss=minsOf(w.daily.sunset[di]);
+    const sr2=minsOf(w.daily.sunrise[di]), ss2=minsOf(w.daily.sunset[di]);
     let mx=0, mxd=0, good=0;
-    times.forEach((t,i)=>{ if(t.slice(0,10)!==d) return; const mm=minsOf(t); if(mm<sr||mm>ss) return;
+    times.forEach((t,i)=>{ if(t.slice(0,10)!==d) return; const mm=minsOf(t); if(mm<sr2||mm>ss2) return;
       const v=H.wind_speed_10m[i]; if(v>mx){mx=v;mxd=H.wind_direction_10m[i];} if(ok(v)) good++; });
-    const dExt = ext.filter(e=>e.t.slice(0,10)===d);
-    html += `<button class="day ${di===state.day?"sel":""}" data-day="${di}">
+    dcards += `<button class="day ${di===state.day?"sel":""}" data-day="${di}">
       <div class="d">${fmtDay(d,di)}</div>
       <div class="w" style="background:${windColor(mx)};color:${textOn(mx)}">${r0(mx)} kn ${card(mxd)}</div>
-      <div class="go" style="color:${good?"var(--ok)":"var(--muted)"}">${good?`${good} h navegables`:"sin ventana"}</div>
-      ${dExt.length?`<div class="h">${dExt.filter(e=>e.hi).map(e=>"▲"+hhmm(e.t)).join(" ")}</div>`:""}
+      <div class="go" style="color:${good?"var(--ok)":"var(--muted)"}">${good?`${good} h buenas`:"sin ventana"}</div>
     </button>`;
   });
-  html += `</div></section>`;
+  dcards += `</div>`;
+  folds += fold("dias","Próximos días", dcards);
 
-  // --- Apaisado: tabla extendida de todos los días (tipo Windguru) ---
+  if(spot.tide && tideH){
+    folds += fold("marea", `Marea del día · ${fmtDay(dSel,state.day)}`, `<div id="tidechart"></div>
+      <div class="tides">${ext.filter(e=>e.t.slice(0,10)===dSel).map(e=>`<div class="tide">${e.hi?"▲ Pleamar":"▼ Bajamar"} <b>${hhmm(e.t)}</b> · ${e.v.toFixed(1)} m</div>`).join("")||"<span class='note'>Sin extremos este día</span>"}</div>
+      <div class="note">${m._harm?`Alturas como en las tablas del SHN.`:`Marea aproximada (modelo). Comparala con la tabla oficial.`}</div>`);
+  } else if(spot.tide && m && m._error){
+    folds += fold("marea","Marea del día",`<div class="err">No pude cargar la marea para este spot.</div>`);
+  }
+
+  // --- Apaisado: tabla extendida arriba ---
+  let extHtml = "";
   const wide = isLandscapePhone();
   if(wide){
     const HRS=[6,9,12,15,18,21];
@@ -655,64 +722,34 @@ function render(){
     let dayHdr = `<tr class="dayh"><th class="rowh"></th>`;
     days.forEach((d,di)=>{ const n=ix.filter(i=>times[i].slice(0,10)===d).length; if(n) dayHdr += `<td colspan="${n}" class="dstart ${di>=7?"far":""}">${fmtDay(d,di)}</td>`; });
     dayHdr += `</tr>`;
-    html += `<section class="card"><h2>Pronóstico extendido · ${days.length} días</h2><div class="tblwrap" id="exttbl"><table class="ext">
+    extHtml = `<section class="card"><h2>Próximos ${days.length} días</h2><div class="tblwrap" id="exttbl"><table class="ext">
       ${dayHdr}
       ${rowE("Hora", i=>`<td class="${c(i)}">${times[i].slice(11,13)}</td>`, 'class="hr"')}
       ${rowE("Viento", i=>{const v=H.wind_speed_10m[i]; return `<td class="wv ${c(i)}" style="background:${windColor(v)};color:${textOn(v)}">${r0(v)}</td>`})}
       ${rowE("Ráfagas", i=>{const v=H.wind_gusts_10m[i]; return `<td class="wv ${c(i)}" style="background:${windColor(v)};color:${textOn(v)}">${r0(v)}</td>`})}
       ${rowE("Dirección", i=>`<td class="${c(i)}">${arrowSvg(H.wind_direction_10m[i],16)}</td>`)}
-      ${rowE("Temp °C", i=>`<td class="${c(i)}">${r0(H.temperature_2m[i])}</td>`)}
-      ${rowE("Lluvia", i=>{const p=H.precipitation[i]; return `<td class="${c(i)}" style="color:${p>0?"#3b8fd9":"var(--muted)"}">${p>0?p.toFixed(1):"·"}</td>`})}
       ${tideH?rowE("Marea m", i=>{const v=tideAt(times[i]); return `<td class="${c(i)}">${v==null?"–":v.toFixed(1)}</td>`}):""}
     </table></div>
-    <div class="note">Cada 3 horas, de 6 a 21 h. Deslizá la tabla hacia los costados. Desde el día 8 (en gris) es una tendencia: menos preciso.</div></section>`;
+    <div class="note">Cada 3 h, de 6 a 21. Deslizá hacia los costados. Los días en gris son solo tendencia.</div></section>`;
   }
 
-  // --- Tabla horaria del día elegido ---
-  const dSel = days[state.day];
-  const sr=minsOf(w.daily.sunrise[state.day]), ss=minsOf(w.daily.sunset[state.day]);
-  const idx = times.map((t,i)=>i).filter(i=>times[i].slice(0,10)===dSel && +times[i].slice(11,13)>=5 && +times[i].slice(11,13)<=23);
-  const isNight = i => { const mm=minsOf(times[i]); return mm<sr-30||mm>ss+30; };
-  const cls = i => (isNight(i)?"night ":"")+(i===nowIdx?"tnow":"");
-  const row = (label, f, extra="") => `<tr ${extra}><th class="rowh">${label}</th>${idx.map(i=>f(i)).join("")}</tr>`;
-  html += `<section class="card"><h2>${fmtDay(dSel,state.day)} · hora por hora</h2><div class="tblwrap"><table>
-    ${row("Hora", i=>`<td class="${cls(i)}">${times[i].slice(11,13)}</td>`, 'class="hr"')}
-    ${row("Viento kn", i=>{const v=H.wind_speed_10m[i]; return `<td class="wv ${cls(i)}" style="background:${windColor(v)};color:${textOn(v)}">${r0(v)}</td>`})}
-    ${row("Ráfagas kn", i=>{const v=H.wind_gusts_10m[i]; return `<td class="wv ${cls(i)}" style="background:${windColor(v)};color:${textOn(v)}">${r0(v)}</td>`})}
-    ${row("Dirección", i=>`<td class="${cls(i)}">${arrowSvg(H.wind_direction_10m[i])}<div style="font-size:11px">${card(H.wind_direction_10m[i])}</div></td>`)}
-    ${row("Temp °C", i=>`<td class="${cls(i)}">${r0(H.temperature_2m[i])}</td>`)}
-    ${row("Sensación", i=>`<td class="${cls(i)}">${r0(H.apparent_temperature[i])}</td>`)}
-    ${row("Lluvia mm", i=>{const p=H.precipitation[i]; return `<td class="${cls(i)}" style="color:${p>0?"#3b8fd9":"var(--muted)"}">${p>0?p.toFixed(1):"·"}</td>`})}
-    ${tideH?row("Marea m", i=>{const v=tideAt(times[i]); return `<td class="${cls(i)}">${v==null?"–":v.toFixed(1)}</td>`}):""}
-  </table></div>
-  <div class="legend">${[0,5,8,11,14,17,20,23,27,31,36,42].map(k=>`<span style="background:${windColor(k)};color:${textOn(k)}">${k}+</span>`).join("")}</div>
-  ${state.data.calib?`<div class="note">📐 ${calibText(state.data.calib)}</div>`:""}
-  ${w._prudent?`<div class="note">Modo prudente: en cada hora se muestra el viento y las ráfagas más fuertes que prevé cualquiera de 4 modelos (ECMWF, GFS, ICON, GEM). Se desactiva en ⚙︎.</div>`:""}
-  <div class="note">☀️ Sale ${hhmm(w.daily.sunrise[state.day])} · se pone ${hhmm(w.daily.sunset[state.day])} h. Las horas de noche se ven más claras.</div>
-  </section>`;
+  // --- Explicaciones: van a ⚙︎ Ajustes, no a la pantalla principal ---
+  const info = [];
+  if(state.data.calib) info.push("📐 "+calibText(state.data.calib));
+  if(w._prudent) info.push("Modo prudente: cada hora muestra el viento más fuerte que prevé cualquiera de 4 modelos (ECMWF, GFS, ICON, GEM).");
+  if(m && m._harm) info.push(`Marea calculada con las constantes del SHN para ${spot.station}${spot.z0src==="SHN"?"":" (alturas aproximadas)"}.`);
+  info.push(`Datos: Open-Meteo${spot.metar?", METAR y TAF del aeropuerto":""}. Actualizado ${state.data.loadedAt.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit",hourCycle:"h23"})}.`);
+  $("#cfginfo").innerHTML = info.map(t=>`<div>${escH(t)}</div>`).join("");
 
-  // --- Marea ---
-  let tideHtml="";
-  if(spot.tide){
-    if(tideH){
-      tideHtml += `<section class="card"><h2>Marea · ${fmtDay(dSel,state.day)}</h2><div id="tidechart"></div>
-        <div class="tides">${ext.filter(e=>e.t.slice(0,10)===dSel).map(e=>`<div class="tide">${e.hi?"▲ Pleamar":"▼ Bajamar"} <b>${hhmm(e.t)}</b> · ${e.v.toFixed(1)} m</div>`).join("")||"<span class='note'>Sin extremos este día</span>"}</div>
-        <div class="note">${m._harm?`Marea astronómica calculada con las constantes armónicas de la estación ${spot.station} del SHN. ${spot.z0src==="SHN"?`Alturas referidas al plano de reducción del SHN (${spot.z0.toFixed(2).replace(".",",")} m bajo el nivel medio), igual que las tablas oficiales.`:`Alturas referidas a un plano de reducción aproximado (${spot.z0.toFixed(2).replace(".",",")} m bajo el nivel medio): pueden diferir unos centímetros de la tabla oficial.`} No incluye el efecto del viento ni de la presión.`:""}${m._km>3?`Calculada en el punto de mar más cercano con datos, a ${m._km} km del spot. `:""}${m._harm?"":`Marea calculada por modelo (Open-Meteo). Alturas aproximadas${m._off?` (se sumaron ${m._off.toFixed(1).replace(".",",")} m para que no queden negativas)`:""}: comparalas con la tabla oficial del puerto antes de confiar.`}</div></section>`;
-    } else if(m && m._none){
-      tideHtml += `<section class="card"><h2>Marea</h2><div class="note" style="margin:0">No hay datos de marea para este lugar (no hay mar cerca, o es un lago o río). Se muestra solo el viento.</div></section>`;
-    } else {
-      tideHtml += `<section class="card"><div class="err">No pude cargar la marea para este spot.<div style="font-size:12px;margin-top:4px">Motivo: ${(m&&m._error)||"sin respuesta del servicio"}</div></div></section>`;
-    }
-  }
+  let html = (wide ? extHtml : "") + hero + folds;
 
-  html = html.replace("%%TIDE%%", tideHtml);
-  if(wide){ const k=html.indexOf('<section class="card"><h2>Pronóstico extendido'); const e=html.indexOf('</section>',k)+10; html = html.slice(k,e) + html.slice(0,k) + html.slice(e); }
-  html += `<div class="note" style="text-align:center">Datos: Open-Meteo · actualizado ${state.data.loadedAt.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit",hourCycle:"h23"})}</div>`;
   $("#app").innerHTML = html;
-  document.querySelectorAll(".day").forEach(b=>b.onclick=()=>{state.day=+b.dataset.day;render();});
+  document.querySelectorAll(".day").forEach(b=>b.onclick=()=>{state.day=+b.dataset.day; state.folds.hora=true; store.set("folds",state.folds); render(); const h=document.querySelector('[data-f="hora"]'); if(h) h.scrollIntoView({behavior:"smooth",block:"start"});});
+  document.querySelectorAll("details.fold").forEach(d=>d.addEventListener("toggle",()=>{ state.folds[d.dataset.f]=d.open; store.set("folds",state.folds);
+    if(d.dataset.f==="marea" && d.open && tideH) drawTide(tideT,tideH,ext,dSel,now,w.daily.sunrise[state.day],w.daily.sunset[state.day]); }));
   const et=$("#exttbl"); if(et){ const n=et.querySelector("td.tnow"); if(n) et.scrollLeft=Math.max(0,n.offsetLeft-120); }
   const sb=$("#speakbtn"); if(sb){ if(!("speechSynthesis" in window)) sb.style.display="none"; else sb.onclick=toggleSpeak; }
-  if(tideH) drawTide(tideT,tideH,ext,dSel,now,w.daily.sunrise[state.day],w.daily.sunset[state.day]);
+  if(tideH && state.folds.marea) drawTide(tideT,tideH,ext,dSel,now,w.daily.sunrise[state.day],w.daily.sunset[state.day]);
 }
 
 function drawTide(T,Hh,ext,day,now,sunrise,sunset){
