@@ -64,7 +64,11 @@
   th.rowh{position:sticky;left:0;background:var(--card);text-align:left;padding-left:8px;padding-right:8px;color:var(--muted);font-weight:600;z-index:1;border-right:1px solid var(--line)}
   tr.hr td{font-weight:650;background:var(--soft)}
   td.wv{font-weight:700;min-width:34px}
-  td.now{outline:2px solid var(--accent);outline-offset:-2px}
+  td.tnow{outline:2px solid var(--accent);outline-offset:-2px}
+  table.ext td{min-width:30px;padding:4px 2px;font-size:12.5px}
+  table.ext td.dstart{border-left:2px solid var(--muted)}
+  table.ext tr.dayh td{font-weight:700;text-transform:capitalize;background:var(--soft);font-size:12.5px}
+  table.ext tr.dayh td.far{color:var(--muted)}
   .arr{display:inline-block;width:18px;height:18px}
   .night{opacity:.55}
   /* Marea */
@@ -95,7 +99,7 @@
   .vtabs{display:flex;gap:6px;margin-top:10px}
   .vtab{flex:1;max-width:170px;background:transparent;border:1px solid #ffffff33;color:var(--cream);border-radius:20px;padding:6px 10px;font-weight:600}
   .vtab.on{background:var(--orange);border-color:var(--orange);color:#0a0a0a}
-  #mapview{display:flex;flex-direction:column;height:calc(100dvh - 150px);min-height:420px}
+  #mapview{display:flex;flex-direction:column;height:calc(100dvh - 150px);min-height:300px}
   .wmlegend{display:flex;font-size:12px;font-weight:600;color:#fff}
   .wmlegend span{flex:1;text-align:center;padding:3px 0;text-shadow:0 0 2px #0008}
   .wmlegend .u{background:#333;flex:0 0 34px}
@@ -124,6 +128,35 @@
   .sitem2.sel{border-color:var(--orange)} .sitem2 span{color:var(--muted);font-size:12px;margin-left:6px}
   .snums{font-size:13px;color:var(--muted);margin-top:2px}
   .sdel{position:absolute;right:8px;top:50%;transform:translateY(-50%);border:none;background:none;font-size:18px}
+  /* Teléfono en horizontal: encabezado compacto en una sola franja */
+  @media (orientation: landscape) and (max-height: 520px){
+    header{padding:6px 12px 6px;border-bottom-width:3px}
+    header{display:flex;align-items:center;gap:8px}
+    header>.wrap{flex:1;margin:0;max-width:none;min-width:0}
+    h1{display:none}
+    .top{flex:1;flex-wrap:nowrap;gap:6px}
+    .logo{width:34px;height:34px}
+    h1{font-size:14px;flex:0 1 auto;white-space:nowrap}
+    h1 small{display:none}
+    .top select,.iconbtn{padding:5px 8px}
+    .vtabs{margin:0;flex:none;width:auto}
+    .vtab{flex:none;padding:5px 10px;max-width:none;font-size:13px}
+    #spot{max-width:170px} #model{max-width:120px}
+    .top{min-width:0;overflow:hidden}
+    .settings{position:absolute;left:12px;right:12px;top:50px;z-index:20;background:#111}
+    main,#sessview{padding-top:8px}
+    .card{padding:10px 12px;margin-bottom:8px}
+    .now{grid-template-columns:auto 1fr}
+    .bigwind .num{font-size:38px}
+    .nowgrid{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}
+    #mapview{min-height:0}
+    .wmlegend span{padding:1px 0;font-size:11px}
+    .wmbar{padding:4px 10px}
+    .sgrid.big{grid-template-columns:repeat(4,1fr)}
+    .sgrid.big b{font-size:24px}
+    .sbtn{padding:9px;margin:8px 0 4px;font-size:16px}
+    #smap{height:200px}
+  }
   @media (max-width:560px){
     .now{grid-template-columns:1fr}
     .bigwind .num{font-size:40px}
@@ -270,7 +303,7 @@ async function load(){
   const w = new URL("https://api.open-meteo.com/v1/forecast");
   Object.entries({latitude:spot.lat,longitude:spot.lon,
     hourly:"wind_speed_10m,wind_gusts_10m,wind_direction_10m,temperature_2m,apparent_temperature,precipitation,cloud_cover",
-    daily:"sunrise,sunset", wind_speed_unit:"kn", timezone:TZ, forecast_days:7, models:state.model
+    daily:"sunrise,sunset", wind_speed_unit:"kn", timezone:TZ, forecast_days:10, models:state.model
   }).forEach(([k,v])=>w.searchParams.set(k,v));
   try{
     const [wr, mr] = await Promise.all([
@@ -293,7 +326,7 @@ function predictTide(spot){
   const rad=Math.PI/180, H=spot.harm;
   const start=Date.parse(nowLocal().slice(0,10)+"T00:00:00-03:00");
   const time=[], val=[];
-  for(let k=0;k<=8*24*6;k++){ // cada 10 min, 8 días
+  for(let k=0;k<=11*24*6;k++){ // cada 10 min, 11 días
     const ms=start+k*600e3;
     const D=(ms-Date.UTC(2000,0,1,12))/864e5, T=D/36525;
     const s=218.3165+481267.8813*T, h=280.4661+36000.7698*T, p=83.3532+4069.0137*T, N=(125.0445-1934.1363*T)*rad;
@@ -319,7 +352,7 @@ async function loadTideAuto(spot){
     const res = await Promise.all(cands.map(async([lat,lon])=>{
       const u = new URL("https://marine-api.open-meteo.com/v1/marine");
       Object.entries({latitude:lat.toFixed(4),longitude:lon.toFixed(4),hourly:"sea_level_height_msl",
-        timezone:TZ, forecast_days:7, cell_selection:"sea"}).forEach(([k,v])=>u.searchParams.set(k,v));
+        timezone:TZ, forecast_days:10, cell_selection:"sea"}).forEach(([k,v])=>u.searchParams.set(k,v));
       try{ const rr=await fetch(u); if(!rr.ok){ allAnswered=false; return null; } const j=await rr.json();
         const v=j.hourly?.sea_level_height_msl||[]; if(v.filter(x=>x!=null).length<48) return null;
         const amp=Math.max(...v.filter(x=>x!=null))-Math.min(...v.filter(x=>x!=null));
@@ -342,7 +375,7 @@ async function loadTide(spot){
     for(const cell of ["sea","nearest"]){
       const u = new URL("https://marine-api.open-meteo.com/v1/marine");
       Object.entries({latitude:lat,longitude:lon,hourly:"sea_level_height_msl",
-        timezone:TZ, forecast_days:7, cell_selection:cell}).forEach(([k,v])=>u.searchParams.set(k,v));
+        timezone:TZ, forecast_days:10, cell_selection:cell}).forEach(([k,v])=>u.searchParams.set(k,v));
       try{
         const r = await fetch(u); const j = await r.json();
         if(!r.ok || j.error){ motivos.push(j.reason || ("error "+r.status)); continue; }
@@ -359,6 +392,8 @@ async function loadTide(spot){
   return {_error: [...new Set(motivos)].slice(0,3).join(" · ")};
 }
 function distKm(a,b,c,d){const R=6371,t=x=>x*Math.PI/180;const h=Math.sin(t(c-a)/2)**2+Math.cos(t(a))*Math.cos(t(c))*Math.sin(t(d-b)/2)**2;return 2*R*Math.asin(Math.sqrt(h));}
+
+function isLandscapePhone(){ return window.innerWidth>window.innerHeight && window.innerHeight<=520; }
 
 // ---------- lectura en voz alta ----------
 const CARD_ES={N:"norte",NNE:"nornoreste",NE:"noreste",ENE:"estenoreste",E:"este",ESE:"estesudeste",SE:"sudeste",SSE:"sudsudeste",
@@ -468,12 +503,38 @@ function render(){
   });
   html += `</div></section>`;
 
+  // --- Apaisado: tabla extendida de todos los días (tipo Windguru) ---
+  const wide = isLandscapePhone();
+  if(wide){
+    const HRS=[6,9,12,15,18,21];
+    const nowH=+now.slice(11,13), nowDay=now.slice(0,10);
+    const nowCol = (()=>{ let best=-1; times.forEach((t,i)=>{ if(t.slice(0,10)===nowDay && HRS.includes(+t.slice(11,13)) && +t.slice(11,13)<=nowH) best=i; }); return best; })();
+    const ix = times.map((t,i)=>i).filter(i=>HRS.includes(+times[i].slice(11,13)) && days.includes(times[i].slice(0,10)));
+    const dayStart = i => +times[i].slice(11,13)===HRS[0];
+    const c = i => (dayStart(i)?"dstart ":"")+(i===nowCol?"tnow":"");
+    const rowE = (label, f, extra="") => `<tr ${extra}><th class="rowh">${label}</th>${ix.map(i=>f(i)).join("")}</tr>`;
+    let dayHdr = `<tr class="dayh"><th class="rowh"></th>`;
+    days.forEach((d,di)=>{ const n=ix.filter(i=>times[i].slice(0,10)===d).length; if(n) dayHdr += `<td colspan="${n}" class="dstart ${di>=7?"far":""}">${fmtDay(d,di)}</td>`; });
+    dayHdr += `</tr>`;
+    html += `<section class="card"><h2>Pronóstico extendido · ${days.length} días</h2><div class="tblwrap" id="exttbl"><table class="ext">
+      ${dayHdr}
+      ${rowE("Hora", i=>`<td class="${c(i)}">${times[i].slice(11,13)}</td>`, 'class="hr"')}
+      ${rowE("Viento", i=>{const v=H.wind_speed_10m[i]; return `<td class="wv ${c(i)}" style="background:${windColor(v)};color:${textOn(v)}">${r0(v)}</td>`})}
+      ${rowE("Ráfagas", i=>{const v=H.wind_gusts_10m[i]; return `<td class="wv ${c(i)}" style="background:${windColor(v)};color:${textOn(v)}">${r0(v)}</td>`})}
+      ${rowE("Dirección", i=>`<td class="${c(i)}">${arrowSvg(H.wind_direction_10m[i],16)}</td>`)}
+      ${rowE("Temp °C", i=>`<td class="${c(i)}">${r0(H.temperature_2m[i])}</td>`)}
+      ${rowE("Lluvia", i=>{const p=H.precipitation[i]; return `<td class="${c(i)}" style="color:${p>0?"#3b8fd9":"var(--muted)"}">${p>0?p.toFixed(1):"·"}</td>`})}
+      ${tideH?rowE("Marea m", i=>{const v=tideAt(times[i]); return `<td class="${c(i)}">${v==null?"–":v.toFixed(1)}</td>`}):""}
+    </table></div>
+    <div class="note">Cada 3 horas, de 6 a 21 h. Deslizá la tabla hacia los costados. Desde el día 8 (en gris) es una tendencia: menos preciso.</div></section>`;
+  }
+
   // --- Tabla horaria del día elegido ---
   const dSel = days[state.day];
   const sr=minsOf(w.daily.sunrise[state.day]), ss=minsOf(w.daily.sunset[state.day]);
   const idx = times.map((t,i)=>i).filter(i=>times[i].slice(0,10)===dSel && +times[i].slice(11,13)>=5 && +times[i].slice(11,13)<=23);
   const isNight = i => { const mm=minsOf(times[i]); return mm<sr-30||mm>ss+30; };
-  const cls = i => (isNight(i)?"night ":"")+(i===nowIdx?"now":"");
+  const cls = i => (isNight(i)?"night ":"")+(i===nowIdx?"tnow":"");
   const row = (label, f, extra="") => `<tr ${extra}><th class="rowh">${label}</th>${idx.map(i=>f(i)).join("")}</tr>`;
   html += `<section class="card"><h2>${fmtDay(dSel,state.day)} · hora por hora</h2><div class="tblwrap"><table>
     ${row("Hora", i=>`<td class="${cls(i)}">${times[i].slice(11,13)}</td>`, 'class="hr"')}
@@ -504,9 +565,11 @@ function render(){
   }
 
   html = html.replace("%%TIDE%%", tideHtml);
+  if(wide){ const k=html.indexOf('<section class="card"><h2>Pronóstico extendido'); const e=html.indexOf('</section>',k)+10; html = html.slice(k,e) + html.slice(0,k) + html.slice(e); }
   html += `<div class="note" style="text-align:center">Datos: Open-Meteo · actualizado ${state.data.loadedAt.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit",hourCycle:"h23"})}</div>`;
   $("#app").innerHTML = html;
   document.querySelectorAll(".day").forEach(b=>b.onclick=()=>{state.day=+b.dataset.day;render();});
+  const et=$("#exttbl"); if(et){ const n=et.querySelector("td.tnow"); if(n) et.scrollLeft=Math.max(0,n.offsetLeft-120); }
   const sb=$("#speakbtn"); if(sb){ if(!("speechSynthesis" in window)) sb.style.display="none"; else sb.onclick=toggleSpeak; }
   if(tideH) drawTide(tideT,tideH,ext,dSel,now,w.daily.sunrise[state.day],w.daily.sunset[state.day]);
 }
@@ -629,9 +692,10 @@ function setView(v){
   $("#sessview").style.display = v==="sess"?"":"none";
   if(v==="map"){ fitMapHeight(); openMap(); } else stopAnim();
   if(v==="sess") openSession();
+  if(v==="fc" && state.data) render();
 }
 document.querySelectorAll(".vtab").forEach(b=>b.onclick=()=>setView(b.dataset.v));
-function fitMapHeight(){ const h=window.innerHeight-document.querySelector("header").offsetHeight; $("#mapview").style.height=Math.max(380,h)+"px"; }
+function fitMapHeight(){ const h=window.innerHeight-document.querySelector("header").offsetHeight; $("#mapview").style.height=Math.max(260,h)+"px"; }
 function loadLeaflet(){
   if(window.L) return Promise.resolve();
   return new Promise((ok,ko)=>{
@@ -671,6 +735,7 @@ async function openMap(){
     $("#wmrange").oninput=e=>setHour(+e.target.value);
     $("#wmloc").onclick=()=>{ if(!navigator.geolocation) return; navigator.geolocation.getCurrentPosition(p=>WM.map.setView([p.coords.latitude,p.coords.longitude],10),()=>wmMsg("No se pudo obtener tu ubicación."),{timeout:15000}); };
     window.addEventListener("resize",()=>{ if(state.view==="map"){ fitMapHeight(); WM.map.invalidateSize(); refreshMap(); } });
+    window.addEventListener("orientationchange",()=>setTimeout(()=>{ if(state.view==="map"){ fitMapHeight(); WM.map.invalidateSize(); refreshMap(true); } },300));
   } else {
     WM.map.invalidateSize();
   }
@@ -978,7 +1043,7 @@ ${pts}
   saveFile(`windsurf_${fileDate(s.start)}.gpx`, gpx, "application/gpx+xml");
 }
 
-let rz; window.addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(()=>{if(state.data)render();},200);});
+let rz; window.addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(()=>{if(state.data && state.view==="fc")render();},200);});
 load();
 if("serviceWorker" in navigator && location.protocol.startsWith("http")){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
 </script>
