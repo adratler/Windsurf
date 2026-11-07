@@ -1194,6 +1194,45 @@ function parseMetar(arr, code){
   return {code, spd:+obs.wspd, gst:obs.wgst!=null?+obs.wgst:null, dir:obs.wdir, temp:obs.temp, raw:obs.rawOb,
           obsTime:obs.obsTime, ageMin:Math.round((Date.now()/1000-obs.obsTime)/60)};
 }
+// ---- Lector de METAR en texto (para fuentes que solo dan el texto crudo) ----
+function parseMetarText(raw, icao){
+  if(!raw) return null;
+  const t = raw.replace(/\s+/g," ").trim();
+  const o = {icaoId: icao || (t.match(/\b(SA[A-Z]{2})\b/)||[])[1], rawOb: t};
+  const tm = t.match(/\b(\d{2})(\d{2})(\d{2})Z\b/);
+  if(tm){ const now=new Date(); let d=new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), +tm[1], +tm[2], +tm[3]));
+    if(d.getTime()-Date.now() > 2*86400e3) d=new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth()-1, +tm[1], +tm[2], +tm[3]));
+    o.obsTime = Math.round(d.getTime()/1000); }
+  const w = t.match(/\b(\d{3}|VRB)(\d{2,3})(?:G(\d{2,3}))?(KT|MPS)\b/);
+  if(w){ const f = w[4]==="MPS" ? 1.943844 : 1; o.wdir = w[1]==="VRB" ? "VRB" : +w[1]; o.wspd = Math.round(+w[2]*f); o.wgst = w[3] ? Math.round(+w[3]*f) : null; }
+  const tp = t.match(/\s(M?\d{2})\/(M?\d{2})?\s/); if(tp){ const v=s=>s?(s[0]==="M"?-+s.slice(1):+s):null; o.temp=v(tp[1]); o.dewp=v(tp[2]); }
+  const q = t.match(/\bQ(\d{4})\b/); if(q) o.altim=+q[1];
+  if(/\bCAVOK\b/.test(t) || /\s9999\s/.test(" "+t+" ")) o.visib="6+";
+  o.clouds = [...t.matchAll(/\b(FEW|SCT|BKN|OVC)(\d{3})/g)].map(m=>({cover:m[1], base:+m[2]*100}));
+  return (o.obsTime && o.wspd!=null) ? o : null;
+}
+
+// Servidor propio en Cloudflare (se completa cuando Adrián lo cree). Ej: "https://metar-windsurf.adratler.workers.dev"
+const WORKER_URL = "";
+async function fetchFromWorker(kind){
+  if(!WORKER_URL) return null;
+  try{ const ctl=new AbortController(); const tm=setTimeout(()=>ctl.abort(),8000);
+    const r=await fetch(WORKER_URL+"?t="+kind+"&_="+Date.now(),{cache:"no-store",signal:ctl.signal}); clearTimeout(tm);
+    if(!r.ok) return null; const j=await r.json(); return Array.isArray(j)&&j.length ? j : null; }catch(e){ return null; }
+}
+// Iowa State University (IEM): METAR de todo el mundo; se intenta leer directo
+async function fetchFromIEM(){
+  const out=[];
+  await Promise.all(["SAWH","SAWE"].map(async code=>{
+    try{ const ctl=new AbortController(); const tm=setTimeout(()=>ctl.abort(),8000);
+      const r=await fetch(`https://mesonet.agron.iastate.edu/api/1/currents.json?station=${code}&network=AR__ASOS`,{cache:"no-store",signal:ctl.signal}); clearTimeout(tm);
+      if(!r.ok) return; const j=await r.json(); const rows=(j&&j.data)||[];
+      rows.forEach(x=>{ const o=parseMetarText(x.raw, code); if(o) out.push(o); });
+    }catch(e){}
+  }));
+  return out.length ? out : null;
+}
+
 // Plan B: si el METAR guardado por GitHub está viejo (más de 75 min), pedirlo en vivo a través de un intermediario público
 const AW_URL = "https://aviationweather.gov/api/data/metar?ids=SAWH,SAWE&format=json&hours=3";
 const AW_TAF = "https://aviationweather.gov/api/data/taf?ids=SAWH,SAWE&format=json";
@@ -1217,13 +1256,19 @@ async function fetchMetarLive(url){
 async function getTafData(){
   let j = await loadLocalJSON("taf.json");
   const issued = a => Array.isArray(a)&&a.length ? Math.max(...a.map(t=>typeof t.issueTime==="number"?t.issueTime*1000:Date.parse(t.issueTime)||0)) : 0;
-  if(Date.now()-issued(j) > 4*3600*1000){ const live = await fetchMetarLive(AW_TAF); if(live && issued(live) > issued(j)) j = live; }
+  if(Date.now()-issued(j) > 4*3600*1000){ const live = (await fetchFromWorker("taf")) || (await fetchMetarLive(AW_TAF)); if(live && issued(live) > issued(j)) j = live; }
   return j;
 }
 function newestAgeMin(arr){ if(!Array.isArray(arr)||!arr.length) return Infinity; return (Date.now()/1000-Math.max(...arr.map(o=>o.obsTime||0)))/60; }
 async function getMetarData(){
   let j = await loadLocalJSON("metar.json");
-  if(newestAgeMin(j) > 75){ const live = await fetchMetarLive(); if(live && newestAgeMin(live) < newestAgeMin(j)) j = live; }
+  if(newestAgeMin(j) > 75){
+    const live = (await fetchFromWorker("metar")) || (await fetchFromIEM()) || (await fetchMetarLive());
+    if(live && newestAgeMin(live) < newestAgeMin(j)){
+      // combinar: lo nuevo + lo guardado (para tener las últimas observaciones)
+      const seen=new Set(live.map(o=>o.icaoId+o.obsTime)); j = live.concat((j||[]).filter(o=>!seen.has(o.icaoId+o.obsTime)));
+    }
+  }
   return j;
 }
 
