@@ -590,7 +590,6 @@ function render(){
     </div>
     ${M && !mFresh ? `<div class="note">Último METAR del aeropuerto: hace ${M.ageMin>=120?Math.round(M.ageMin/60)+" h":M.ageMin+" min"} (desactualizado).</div>`:""}
     <div class="verdict" style="background:${verdict.bg};color:${verdict.fg}">${verdict.txt}${nextWin?`<div style="font-weight:500;margin-top:3px">${nextWin}</div>`:""}</div>
-    ${spot.metar?`<a class="metarlink" href="https://metar-taf.com/es/metar/${spot.metar}" target="_blank" rel="noopener">📡 Ver METAR completo del aeropuerto (${spot.metar}) ↗</a>`:""}
   </section>`;
 
   // --- TAF del aeropuerto ---
@@ -1185,13 +1184,17 @@ function parseMetar(arr, code){
 // Plan B: si el METAR guardado por GitHub está viejo (más de 75 min), pedirlo en vivo a través de un intermediario público
 const AW_URL = "https://aviationweather.gov/api/data/metar?ids=SAWH,SAWE&format=json&hours=3";
 const AW_TAF = "https://aviationweather.gov/api/data/taf?ids=SAWH,SAWE&format=json";
-const PROXIES = [u=>"https://corsproxy.io/?url="+encodeURIComponent(u), u=>"https://api.allorigins.win/raw?url="+encodeURIComponent(u)];
+const PROXIES = [
+  u=>"https://api.codetabs.com/v1/proxy/?quest="+encodeURIComponent(u),
+  u=>"https://api.allorigins.win/get?url="+encodeURIComponent(u),
+  u=>"https://api.allorigins.win/raw?url="+encodeURIComponent(u)];
 async function fetchMetarLive(url){
   for(const px of PROXIES){
     try{
-      const ctl=new AbortController(); const tm=setTimeout(()=>ctl.abort(),8000);
+      const ctl=new AbortController(); const tm=setTimeout(()=>ctl.abort(),10000);
       const r=await fetch(px(url||AW_URL),{cache:"no-store",signal:ctl.signal}); clearTimeout(tm);
-      if(!r.ok) continue; const j=await r.json();
+      if(!r.ok) continue; let j=await r.json();
+      if(j && typeof j.contents==="string"){ try{ j=JSON.parse(j.contents); }catch(e){ continue; } }   // formato de allorigins /get
       if(Array.isArray(j) && j.length && j[0].icaoId) return j;
     }catch(e){}
   }
