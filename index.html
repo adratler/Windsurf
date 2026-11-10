@@ -50,6 +50,13 @@
   .tafp .tw{padding:2px 8px;border-radius:6px;font-weight:700}
   .tafp .td{color:var(--muted);display:flex;align-items:center;gap:4px}
   .tafraw{margin-top:8px;font-size:12px;color:var(--muted)} .tafraw code{display:block;white-space:pre-wrap;margin-top:4px}
+  .wgform{margin-top:6px}
+  .wgsearch{display:inline-block;text-decoration:none;margin-bottom:6px}
+  .wgrow{display:flex;gap:6px;margin-top:6px} .wgrow input{flex:1;min-width:0}
+  .wgerr{color:#e8433c;font-size:13px;margin-top:4px}
+  .linkbtn{background:none;border:none;color:var(--accent);font-weight:600;padding:8px 0 0;font-size:14px}
+  .wgwrap{overflow-x:auto;-webkit-overflow-scrolling:touch;background:#fff;border-radius:10px;padding:4px;color:#222}
+  .wgload{padding:16px;text-align:center;color:#5d6d78;font-size:14px}
   .bigwind{display:flex;align-items:center;gap:12px}
   .bigwind .num{font-size:46px;font-weight:700;line-height:1}
   .bigwind .unit{font-size:14px;color:var(--muted)}
@@ -261,13 +268,13 @@
 const TZ0 = "America/Argentina/Ushuaia";
 let TZ = TZ0;
 const SPOTS = [
-  {id:"ushuaia",   name:"Ushuaia (bahía)",    lat:-54.843, lon:-68.296, tide:true, metar:"SAWH", station:"Ushuaia", z0:1.10, z0src:"SHN",
+  {id:"ushuaia",   name:"Ushuaia (bahía)",    lat:-54.843, lon:-68.296, tide:true, metar:"SAWH", station:"Ushuaia", wg:26950, z0:1.10, z0src:"SHN",
      harm:{M2:[0.554,239.1],S2:[0.057,250.7],N2:[0.142,199.7],O1:[0.154,55.9],K1:[0.197,104.2]},
      tidePts:[[-54.812,-68.30],[-54.84,-68.24],[-54.86,-68.12],[-54.88,-67.95],[-54.90,-67.70],[-54.95,-67.30],[-55.00,-66.90],[-55.05,-66.60]]},
-  {id:"riogrande", name:"Río Grande (costa)", lat:-53.785, lon:-67.68, tide:true, metar:"SAWE", station:"Río Grande (exterior)", z0:4.58, z0src:"aprox",
+  {id:"riogrande", name:"Río Grande (costa)", lat:-53.785, lon:-67.68, wg:460088, tide:true, metar:"SAWE", station:"Río Grande (exterior)", z0:4.58, z0src:"aprox",
      harm:{M2:[2.753,336.7],S2:[0.694,33.4],N2:[0.675,307.7],O1:[0.190,55.1],K1:[0.266,112.4]},
      tidePts:[[-53.785,-67.68],[-53.79,-67.58],[-53.80,-67.45],[-53.82,-67.30],[-53.85,-67.10],[-53.90,-66.80]]},
-  {id:"fagnano",   name:"Lago Fagnano (Tolhuin)", lat:-54.515, lon:-67.20, tide:false},
+  {id:"fagnano",   name:"Lago Fagnano (Tolhuin)", lat:-54.515, lon:-67.20, wg:325428, tide:false},
 ];
 const store = {
   get(k,d){try{const v=localStorage.getItem("vmtdf_"+k);return v===null?d:JSON.parse(v)}catch(e){return d}},
@@ -280,6 +287,7 @@ const state = {
   minW: store.get("minW",14),
   maxW: store.get("maxW",35),
   calibOn: store.get("calibOn",true),
+  wgMap: store.get("wgmap",{}), wgEdit:false,
   day: 0, data:null, view:"fc"
 };
 
@@ -507,6 +515,31 @@ function distKm(a,b,c,d){const R=6371,t=x=>x*Math.PI/180;const h=Math.sin(t(c-a)
 
 function isLandscapePhone(){ return window.innerWidth>window.innerHeight && window.innerHeight<=520; }
 
+// ---------- Windguru: widget oficial (windguru.cz/js/widget.php) ----------
+// Se crea una sola vez por spot y se mueve entre redibujos para no recargarlo cada vez.
+const WG = {node:null, spot:null};
+function mountWindguru(spotId){
+  const slot = document.getElementById("wgslot"); if(!slot) return;
+  if(!WG.node || WG.spot!==spotId){
+    WG.spot = spotId;
+    const uid = "wg_fwdg_"+spotId+"_100_"+Date.now();
+    WG.node = document.createElement("div");
+    WG.node.className = "wgwrap";
+    WG.node.innerHTML = `<div class="wgload">Cargando Windguru…</div><span id="${uid}"></span>`;
+    slot.appendChild(WG.node);
+    if(!location.protocol.startsWith("http")){ WG.node.querySelector(".wgload").textContent="Windguru se ve cuando la app está publicada."; return; }
+    const arg = ["s="+spotId, "m=100", "uid="+uid, "wj=knots", "tj=c", "waj=m", "tij=cm", "odh=0", "doh=24", "fhours=240", "hrsm=1",
+                 "vt=forecasts", "lng=es", "idbs=1", "p=WINDSPD,GUST,SMER,HTSGW,PERPW,DIRPW,TMP,TCDC,APCP1s"];
+    const sc = document.createElement("script");
+    sc.src = "https://www.windguru.cz/js/widget.php?"+arg.join("&");
+    sc.onload = ()=>{ const l=WG.node.querySelector(".wgload"); if(l) l.remove(); };
+    sc.onerror = ()=>{ const l=WG.node.querySelector(".wgload"); if(l) l.textContent="No se pudo cargar Windguru (revisá la conexión)."; };
+    document.body.appendChild(sc);
+  } else {
+    slot.appendChild(WG.node);
+  }
+}
+
 // ---------- lectura en voz alta ----------
 const CARD_ES={N:"norte",NNE:"nornoreste",NE:"noreste",ENE:"estenoreste",E:"este",ESE:"estesudeste",SE:"sudeste",SSE:"sudsudeste",
   S:"sur",SSO:"sudsudoeste",SO:"sudoeste",OSO:"oestesudoeste",O:"oeste",ONO:"oestenoroeste",NO:"noroeste",NNO:"nornoroeste"};
@@ -608,6 +641,21 @@ function render(){
     <div class="verdict" style="background:${verdict.bg};color:${verdict.fg}">${verdict.txt}${nextWin?`<div style="font-weight:500;margin-top:3px">${nextWin}</div>`:""}</div>
   </section>`;
 
+  // --- Windguru (widget oficial) ---
+  const wgId = (state.wgMap[spot.id]!==undefined) ? state.wgMap[spot.id] : (spot.wg||null);
+  const wgName = spot.name.replace(/\s*\(.*?\)/,"").replace("📍","").trim();
+  const wgForm = `<div class="wgform" id="wgform" ${wgId&&!state.wgEdit?'style="display:none"':''}>
+      <div class="note" style="margin:0 0 8px">${wgId?"Cambiar el spot de Windguru de este lugar:":"Todavía no elegiste el spot de Windguru para este lugar."}</div>
+      <a class="btn pri wgsearch" href="https://www.google.com/search?q=${encodeURIComponent("windguru "+wgName)}" target="_blank" rel="noopener">🔎 Buscar “${escH(wgName)}” en Windguru</a>
+      <div class="note">Abrí el resultado de windguru.cz, copiá la dirección (por ejemplo windguru.cz/123456) y pegala acá:</div>
+      <div class="wgrow"><input id="wginput" placeholder="https://www.windguru.cz/123456" inputmode="url"><button class="btn pri" id="wgsave">Guardar</button></div>
+      ${wgId?`<button class="linkbtn" id="wgcancel">Cancelar</button>`:""}
+      <div class="wgerr" id="wgerr"></div>
+    </div>`;
+  html += `<section class="card"><h2>Pronóstico Windguru${wgId?` · spot ${wgId}`:""}</h2>
+    ${wgId?`<div id="wgslot"></div><button class="linkbtn" id="wgchange">Cambiar spot de Windguru</button>`:""}
+    ${wgForm}</section>`;
+
   // --- TAF del aeropuerto ---
   const T = state.data.taf;
   if(T){
@@ -707,7 +755,18 @@ function render(){
   html = html.replace("%%TIDE%%", tideHtml);
   if(wide){ const k=html.indexOf('<section class="card"><h2>Pronóstico extendido'); const e=html.indexOf('</section>',k)+10; html = html.slice(k,e) + html.slice(0,k) + html.slice(e); }
   html += `<div class="note" style="text-align:center">Datos: Open-Meteo · actualizado ${state.data.loadedAt.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit",hourCycle:"h23"})}</div>`;
+  if(WG.node && WG.node.parentNode) WG.node.parentNode.removeChild(WG.node);   // conservar el widget entre redibujos
   $("#app").innerHTML = html;
+  if(wgId) mountWindguru(wgId);
+  const wgs=$("#wgsave");
+  if(wgs){
+    const save=()=>{ const v=$("#wginput").value.trim(); const m=v.match(/(\d{2,9})(?!.*\d)/);
+      if(!m){ $("#wgerr").textContent="No encontré el número de spot. Pegá la dirección completa de windguru.cz."; return; }
+      state.wgMap[spot.id]=+m[1]; store.set("wgmap",state.wgMap); state.wgEdit=false; render(); };
+    wgs.onclick=save; $("#wginput").onkeydown=e=>{ if(e.key==="Enter") save(); };
+  }
+  const wgc=$("#wgchange"); if(wgc) wgc.onclick=()=>{ state.wgEdit=true; $("#wgform").style.display=""; wgc.style.display="none"; $("#wginput").focus(); };
+  const wgx=$("#wgcancel"); if(wgx) wgx.onclick=()=>{ state.wgEdit=false; render(); };
   document.querySelectorAll(".day").forEach(b=>b.onclick=()=>{state.day=+b.dataset.day;render();});
   const et=$("#exttbl"); if(et){ const n=et.querySelector("td.tnow"); if(n) et.scrollLeft=Math.max(0,n.offsetLeft-120); }
   const sb=$("#speakbtn"); if(sb){ if(!("speechSynthesis" in window)) sb.style.display="none"; else sb.onclick=toggleSpeak; }
