@@ -514,7 +514,12 @@ async function loadTide(spot){
 }
 function distKm(a,b,c,d){const R=6371,t=x=>x*Math.PI/180;const h=Math.sin(t(c-a)/2)**2+Math.cos(t(a))*Math.cos(t(c))*Math.sin(t(d-b)/2)**2;return 2*R*Math.asin(Math.sqrt(h));}
 
-function isLandscapePhone(){ return window.innerWidth>window.innerHeight && window.innerHeight<=520; }
+function isLandscapePhone(){
+  // se usa la orientación del teléfono (no la del área visible, que cambia al abrir el teclado)
+  const o = screen.orientation && screen.orientation.type;
+  if(o && screen.width && screen.height) return o.startsWith("landscape") && Math.min(screen.width,screen.height)<=520;
+  return window.innerWidth>window.innerHeight && window.innerHeight<=520;
+}
 
 // ---------- Windguru: widget oficial (windguru.cz/js/widget.php) ----------
 // Se crea una sola vez por spot y se mueve entre redibujos para no recargarlo cada vez.
@@ -1467,7 +1472,15 @@ function renderMetarTab(){
 }
 
 startAutoRefresh();
-let rz; window.addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(()=>{if(state.data && state.view==="fc")render();},200);});
+let rz, lastW=window.innerWidth, lastWide=isLandscapePhone();
+window.addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(()=>{
+  // sólo redibujar si giró el teléfono (cambia el ancho); al abrirse el teclado cambia sólo el alto
+  const a=document.activeElement; if(a && (a.tagName==="INPUT"||a.tagName==="TEXTAREA")) return;
+  const w=window.innerWidth, wide=isLandscapePhone();
+  if(w===lastW && wide===lastWide) return;
+  lastW=w; lastWide=wide;
+  if(state.data && state.view==="fc") render();
+},200);});
 load();
 if("serviceWorker" in navigator && location.protocol.startsWith("http")){ navigator.serviceWorker.register("sw.js").catch(()=>{}); }
 </script>
