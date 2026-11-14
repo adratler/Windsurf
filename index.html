@@ -206,10 +206,11 @@
       <select id="spot" aria-label="Spot"></select>
       <button class="iconbtn" id="delspot" title="Quitar este lugar de la lista" style="display:none">🗑</button>
       <select id="model" aria-label="Modelo">
-        <option value="best_match">Modelo: automático</option>
-        <option value="ecmwf_ifs025">ECMWF</option>
+        <option value="gem_seamless">GEM (Canadá)</option>
+        <option value="icon_seamless">ICON (Alemania)</option>
+        <option value="ecmwf_ifs">ECMWF 9 km</option>
         <option value="gfs_seamless">GFS</option>
-        <option value="icon_seamless">ICON</option>
+        <option value="best_match">Automático</option>
       </select>
       <button class="iconbtn" id="themebtn" title="Modo claro / oscuro">☾</button>
       <button class="iconbtn" id="cfgbtn" title="Ajustes">⚙︎</button>
@@ -280,7 +281,7 @@ const store = {
 let customSpots = store.get("custom", []);
 const state = {
   spot: store.get("spot","ushuaia"),
-  model: store.get("model","best_match"),
+  model: store.get("model2","gem_seamless"),   // GEM: el que mejor acertó en Ushuaia y Río Grande (comparación con METAR, nov 2026)
   minW: store.get("minW",14),
   maxW: store.get("maxW",35),
   calibOn: store.get("calibOn",true),
@@ -358,8 +359,9 @@ async function load(){
       const v=mr.hourly.sea_level_height_msl, mn=Math.min(...v.filter(x=>x!=null));
       if(mn<0){ const off=Math.ceil(-mn*2)/2; mr.hourly.sea_level_height_msl=v.map(x=>x==null?null:x+off); mr._off=off; }
     }
+    if(spot.metar && !wgOk) saveRawFc(spot.metar, wr);
     logWGObs();
-    const calib = spot.metar ? (wgOk ? (WGCAL_SPOT[spot.metar]===wgId ? applyCalibrationWG(wr, spot.metar) : null) : (hist ? applyCalibration(wr, hist, spot.metar) : null)) : null;
+    const calib = spot.metar && !wgOk ? applyCalibrationWG(wr, spot.metar) : null;
     const taf = (spot.metar && Array.isArray(tafAll)) ? tafAll.filter(x=>x.icaoId===spot.metar).sort((a,b)=>(b.issueTime||0)-(a.issueTime||0))[0]||null : null;
     state.data = {spot, w:wr, m:mr, metar, taf, calib, loadedAt:new Date()};
     render();
@@ -399,7 +401,15 @@ function applyCalibration(wr, hist, code){
   return info;
 }
 // ---- Corrección local de Windguru: compara lo pronosticado por Windguru con lo medido (METAR)
-const WGCAL_SPOT = {SAWH:26950, SAWE:460088};   // spot de Windguru que se compara con cada aeropuerto
+const WGCAL_SPOT = {SAWH:26950, SAWE:460088};   // (Windguru, sin uso)
+// pronóstico crudo del modelo elegido, guardado por aeropuerto, para compararlo luego con el METAR
+function saveRawFc(code, w){
+  try{
+    const H=w.hourly, off=(typeof w.utc_offset_seconds==="number")?w.utc_offset_seconds:-10800;
+    const t0=Date.parse(H.time[0]+":00Z")/1000-off;
+    store.set("fcc_"+code+"_"+state.model,{at:Date.now(), j:{initstamp:t0, hours:H.time.map((_,i)=>i), WINDSPD:H.wind_speed_10m.slice(), GUST:H.wind_gusts_10m.slice(), WINDDIR:H.wind_direction_10m.slice()}});
+  }catch(e){}
+}
 function wgAt(j, ts){   // valor de Windguru (viento, ráfaga, dirección) interpolado a un instante
   if(!j || !Array.isArray(j.hours)) return null;
   const T=j.hours.map(h=>(j.initstamp||0)+h*3600); if(ts<T[0]||ts>T[T.length-1]) return null;
@@ -411,20 +421,21 @@ function wgAt(j, ts){   // valor de Windguru (viento, ráfaga, dirección) inter
 }
 function logWGObs(){
   if(!Array.isArray(MV.raw)) return;
-  Object.entries(WGCAL_SPOT).forEach(([code,id])=>{
-    const c=store.get("wgc_"+id,null); if(!c || !c.j) return;
-    const log=store.get("wgcal_"+code,[]), seen=new Set(log.map(e=>e.t)); let add=0;
+  ["SAWH","SAWE"].forEach(code=>{
+    const c=store.get("fcc_"+code+"_"+state.model,null); if(!c || !c.j) return;
+    const key="fccal_"+code+"_"+state.model;
+    const log=store.get(key,[]), seen=new Set(log.map(e=>e.t)); let add=0;
     MV.raw.filter(o=>o.icaoId===code && typeof o.obsTime==="number" && typeof o.wdir==="number" && o.wspd!=null).forEach(o=>{
       if(seen.has(o.obsTime)) return;
       const f=wgAt(c.j, o.obsTime); if(!f || f.d==null) return;
       log.push({t:o.obsTime, os:+o.wspd, og:o.wgst!=null?+o.wgst:+o.wspd, fs:Math.round(f.s*10)/10, fg:Math.round(f.g*10)/10, fd:Math.round(f.d)}); add++;
     });
-    if(add){ log.sort((a,b)=>a.t-b.t); store.set("wgcal_"+code, log.slice(-3000)); }
+    if(add){ log.sort((a,b)=>a.t-b.t); store.set(key, log.slice(-3000)); }
   });
 }
 function applyCalibrationWG(wr, code){
-  const S = store.get("wgcal_"+code,[]).filter(h=>h.fs>=4);
-  const info = {n:S.length, need:30, key:"wg", applied:false, sectors:{}};
+  const S = store.get("fccal_"+code+"_"+state.model,[]).filter(h=>h.fs>=4);
+  const info = {n:S.length, need:30, key:"fc", applied:false, sectors:{}};
   if(!state.calibOn){ info.off=true; return info; }
   if(S.length < info.need) return info;
   const clamp = f => Math.max(0.6, Math.min(2.5, f));
@@ -433,7 +444,7 @@ function applyCalibrationWG(wr, code){
   for(let k=0;k<8;k++){ const ss=S.filter(h=>SECT(h.fd)===k); if(ss.length>=15){ const gg=ss.filter(h=>h.fg>=6); bySect[k]={f:median(ss.map(h=>h.os/h.fs)), g:gg.length>=10?median(gg.map(h=>h.og/h.fg)):null, n:ss.length}; } }
   const fS = d => clamp(bySect[SECT(d)] ? bySect[SECT(d)].f : all);
   const fG = d => clamp(bySect[SECT(d)] && bySect[SECT(d)].g ? bySect[SECT(d)].g : allG);
-  const H = wr.hourly, lim = wr._wgEnd || Infinity;
+  const H = wr.hourly, lim = Infinity;
   H.wind_speed_10m = H.wind_speed_10m.map((v,i)=>{ if(i>lim) return v; const f=fS(H.wind_direction_10m[i]); return Math.abs(f-1)<0.1 ? v : v*f; });
   H.wind_gusts_10m = H.wind_gusts_10m.map((v,i)=>{ if(i>lim) return v; const f=fG(H.wind_direction_10m[i]); const g=Math.abs(f-1)<0.1 ? v : v*f; return Math.max(g, H.wind_speed_10m[i]); });
   info.applied = true; info.all = clamp(all); info.sectors = bySect;
@@ -446,7 +457,7 @@ function calibText(c){
   const parts = Object.entries(c.sectors).sort((a,b)=>b[1].n-a[1].n).slice(0,3)
     .map(([k,v])=>{ const pct=Math.round((v.f-1)*100); return `con viento del ${SECT_ES[k]} ${pct>=0?"se queda corto":"se pasa"} un ${Math.abs(pct)} %`; });
   const g = Math.round((c.all-1)*100);
-  return `Pronóstico corregido con ${c.n} mediciones del aeropuerto. En general ${c.key==="wg"?"Windguru":"el modelo"} ${g>=0?"se queda corto":"se pasa"} un ${Math.abs(g)} %${parts.length?"; "+parts.join(", "):""}.`;
+  return `Pronóstico corregido con ${c.n} mediciones del aeropuerto. En general el modelo ${g>=0?"se queda corto":"se pasa"} un ${Math.abs(g)} %${parts.length?"; "+parts.join(", "):""}.`;
 }
 
 // ---- TAF: pronóstico de los meteorólogos del aeropuerto
@@ -568,7 +579,10 @@ function isLandscapePhone(){
 // ---------- Windguru: widget oficial (windguru.cz/js/widget.php) ----------
 // Se crea una sola vez por spot y se mueve entre redibujos para no recargarlo cada vez.
 // ---------- Windguru (datos a través del servidor propio) ----------
-const wgIdOf = spot => (state.wgMap[spot.id]!==undefined) ? state.wgMap[spot.id] : (spot.wg||null);
+const USE_WG = false;
+const MODEL_NAME = {gem_seamless:"GEM", icon_seamless:"ICON", ecmwf_ifs:"ECMWF 9 km", gfs_seamless:"GFS", best_match:"automático"};
+const srcName = w => w._wg ? "Windguru" : "modelo "+(MODEL_NAME[state.model]||state.model);   // Windguru (micro, GFS) desactivado: en la comparación con el METAR acertó peor que GEM
+const wgIdOf = spot => !USE_WG ? null : (state.wgMap[spot.id]!==undefined) ? state.wgMap[spot.id] : (spot.wg||null);
 function wgCached(id){ const c=store.get("wgc_"+id,null); return (c && Date.now()-c.at < 12*3600e3) ? c.j : null; }
 async function loadWG(id){
   if(!WORKER_URL || !id) return null;
@@ -713,7 +727,7 @@ function render(){
         <div class="arrowbig" style="background:${windColor(ws)}">${arrowSvg(wd,30,textOn(ws))}</div>
         <div><div class="num">${r0(ws)}<span class="unit"> kn</span></div>
         <div class="unit">ráfagas ${r0(gs)} kn · ${card(wd)} (${r0(wd)}°)</div>
-        <div class="src">${mFresh?`📡 Medido en el aeropuerto (${M.code}) hace ${M.ageMin} min · pronóstico: ${r0(fws)} kn`:`📈 Pronóstico ${w._wg?"Windguru":"Open-Meteo"}${state.data.calib&&state.data.calib.applied?" corregido con lo medido":""}`}</div></div>
+        <div class="src">${mFresh?`📡 Medido en el aeropuerto (${M.code}) hace ${M.ageMin} min · pronóstico: ${r0(fws)} kn`:`📈 Pronóstico ${srcName(w)}${state.data.calib&&state.data.calib.applied?" corregido con lo medido":""}`}</div></div>
       </div>
       <div class="nowgrid">
         <div class="stat"><div class="k">Temperatura</div><div class="v">${r0(H.temperature_2m[nowIdx])}°</div></div>
@@ -736,7 +750,7 @@ function render(){
       ${wgId?`<button class="linkbtn" id="wgcancel">Cancelar</button>`:""}
       <div class="wgerr" id="wgerr"></div>
     </div>`;
-  if(!wgId) html += `<section class="card"><h2>Spot de Windguru para ${escH(wgName)}</h2>${wgForm}</section>`;
+  if(USE_WG && !wgId) html += `<section class="card"><h2>Spot de Windguru para ${escH(wgName)}</h2>${wgForm}</section>`;
 
   // --- TAF del aeropuerto ---
   const T = state.data.taf;
@@ -842,7 +856,7 @@ function render(){
 
   html = html.replace("%%TIDE%%", tideHtml);
   if(wide){ const k=html.indexOf('<section class="card"><h2>Pronóstico extendido'); const e=html.indexOf('</section>',k)+10; html = html.slice(k,e) + html.slice(0,k) + html.slice(e); }
-  html += `<div class="note" style="text-align:center">Datos: ${w._wg?"Windguru":"Open-Meteo"} · actualizado ${state.data.loadedAt.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit",hourCycle:"h23"})}</div>`;
+  html += `<div class="note" style="text-align:center">Datos: ${srcName(w)} (Open-Meteo) · actualizado ${state.data.loadedAt.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit",hourCycle:"h23"})}</div>`;
   $("#app").innerHTML = html;
   const wgs=$("#wgsave");
   if(wgs){
@@ -960,7 +974,7 @@ function useHere(){
     $("#mclose").onclick=hideModal;
   }, {enableHighAccuracy:true, timeout:15000});
 }
-$("#model").onchange=e=>{state.model=e.target.value;store.set("model",state.model);load(); if(state.view==="map") refreshMap(true);};
+$("#model").onchange=e=>{state.model=e.target.value;store.set("model2",state.model);load(); if(state.view==="map") refreshMap(true);};
 $("#reload").onclick=load;
 function applyTheme(t){ document.body.classList.toggle("dark",t==="dark"); $("#themebtn").textContent = t==="dark"?"☀︎":"☾";
   $("#themebtn").title = t==="dark"?"Pasar a modo diurno":"Pasar a modo nocturno"; }
