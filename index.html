@@ -434,7 +434,7 @@ function logWGObs(){
   });
 }
 // Corrección prudente: en nudos (no en %), por rango de viento pronosticado; exige muchos datos de varios días
-const CAL_NEED_N = 60, CAL_NEED_DAYS = 5, CAL_MAX_UP = 10, CAL_MAX_DOWN = 6;
+const CAL_NEED_N = 100, CAL_NEED_DAYS = 14, CAL_MAX_UP = 10, CAL_MAX_DOWN = 6, CAL_WINDOW_DAYS = 60;
 const CAL_BINS = [[0,6],[6,12],[12,18],[18,99]];   // rangos de viento pronosticado (kn)
 function calDelta(S, fkey, okey){
   // diferencia mediana (medido − pronosticado) para cada rango; si un rango tiene pocos datos, usa la general
@@ -448,7 +448,8 @@ function calDelta(S, fkey, okey){
   return {all, bins, at};
 }
 function applyCalibrationWG(wr, code){
-  const S = store.get("fccal_"+code+"_"+state.model,[]);
+  const since = Date.now()/1000 - CAL_WINDOW_DAYS*86400;   // sólo los últimos 60 días
+  const S = store.get("fccal_"+code+"_"+state.model,[]).filter(h=>h.t>=since);
   const nDays = new Set(S.map(h=>new Date((h.t-10800)*1000).toISOString().slice(0,10))).size;
   const info = {n:S.length, days:nDays, need:CAL_NEED_N, needDays:CAL_NEED_DAYS, key:"kn", applied:false, sectors:{}};
   if(!state.calibOn){ info.off=true; return info; }
@@ -458,7 +459,7 @@ function applyCalibrationWG(wr, code){
   const sectAdj = {};
   for(let k=0;k<8;k++){
     const ss=S.filter(h=>SECT(h.fd)===k), dd=new Set(ss.map(h=>new Date((h.t-10800)*1000).toISOString().slice(0,10))).size;
-    if(ss.length>=30 && dd>=4){ const r=median(ss.map(h=>(h.os-h.fs)-W.at(h.fs))); sectAdj[k]=r; info.sectors[k]={d:W.all+r, n:ss.length}; }
+    if(ss.length>=40 && dd>=7){ const r=median(ss.map(h=>(h.os-h.fs)-W.at(h.fs))); sectAdj[k]=r; info.sectors[k]={d:W.all+r, n:ss.length}; }
   }
   const clamp = d => Math.max(-CAL_MAX_DOWN, Math.min(CAL_MAX_UP, d));
   const H = wr.hourly;
