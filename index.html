@@ -1084,15 +1084,31 @@ function drawSpotMarkers(){
   });
 }
 // ---- datos de viento en grilla ----
+const METAR_POS = {SAWH:[-54.843,-68.296], SAWE:[-53.778,-67.749]};
+function drawMetarMarkers(){
+  if(!WM.map || !Array.isArray(MV.raw)) return;
+  (WM.mk||[]).forEach(m=>m.remove()); WM.mk=[];
+  Object.entries(METAR_POS).forEach(([code,pos])=>{
+    const o = MV.raw.filter(x=>x.icaoId===code && typeof x.obsTime==="number").sort((a,b)=>b.obsTime-a.obsTime)[0];
+    if(!o || Date.now()/1000-o.obsTime > 150*60 || o.wspd==null) return;
+    const vrb = typeof o.wdir!=="number";
+    const arrow = vrb ? "" : `<span style="display:inline-block;transform:rotate(${(o.wdir+180)%360}deg)">↑</span> `;
+    const txt = `${arrow}${vrb?"VRB":card(o.wdir)} ${o.wspd}${o.wgst?"/"+o.wgst:""} kn`;
+    const icon = L.divIcon({className:"", html:`<div style="background:${windColor(o.wspd)};color:${textOn(o.wspd)};font:700 12px system-ui;padding:3px 6px;border-radius:6px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.4)">📡 ${txt}</div>`, iconSize:null, iconAnchor:[-8,10]});
+    WM.mk.push(L.marker(pos,{icon, interactive:false, zIndexOffset:1000}).addTo(WM.map));
+  });
+}
 async function refreshMap(force){
   if(!WM.map || state.view!=="map") return;
   const b = WM.map.getBounds(), z = WM.map.getZoom();
   const g = WM.grid;
   const inside = g && !force && g.z===z && b.getSouth()>=g.lat0 && b.getNorth()<=g.lat1 && b.getWest()>=g.lon0 && b.getEast()<=g.lon1 && g.model===state.model;
   if(!inside){ await fetchGrid(b.pad(0.25), z); }
+  try{ drawMetarMarkers(); }catch(e){}
   if(WM.grid){ setHour(WM.t, true); }
 }
-async function fetchGrid(b, z){
+async function fetchGrid(b, z, modelOverride){
+  const model = modelOverride || state.model;
   const size=WM.map.getSize();
   let lat0=Math.max(-80,b.getSouth()), lat1=Math.min(80,b.getNorth()), lon0=b.getWest(), lon1=b.getEast();
   if(lon1-lon0>360){ lon0=-180; lon1=180; }
@@ -1104,7 +1120,7 @@ async function fetchGrid(b, z){
   }
   const u=new URL("https://api.open-meteo.com/v1/forecast");
   Object.entries({latitude:lats.join(","),longitude:lons.join(","),hourly:"wind_speed_10m,wind_direction_10m",
-    wind_speed_unit:"kn",forecast_days:4,timezone:TZ,models:state.model}).forEach(([k,v])=>u.searchParams.set(k,v));
+    wind_speed_unit:"kn",forecast_days:4,timezone:TZ,models:model}).forEach(([k,v])=>u.searchParams.set(k,v));
   wmMsg("Cargando datos del mapa…");
   try{
     const r=await fetch(u); const j=await r.json();
@@ -1118,6 +1134,11 @@ async function fetchGrid(b, z){
     let t = keep ? times.indexOf(keep) : -1;
     if(t<0){ const now=nowLocal().slice(0,13); t=Math.max(0,times.findIndex(x=>x.slice(0,13)===now)); }
     WM.t=t; $("#wmrange").max=times.length-1;
+    // control: si faltan datos del modelo en muchos puntos, se usa el automático
+    const S0=WM.grid.S.map(a=>a[t]), D0=WM.grid.D.map(a=>a[t]);
+    const bad = S0.filter((v,i)=>v==null||D0[i]==null).length / S0.length;
+    if(bad>0.3 && model!=="best_match"){ return fetchGrid(b, z, "best_match"); }
+    WM.grid.model = state.model;
     wmMsg("");
   }catch(e){ wmMsg("No pude cargar los datos del mapa ("+e.message+")."); }
 }
@@ -1184,6 +1205,9 @@ function setHour(t, keepView){
   const tm=g.times[WM.t], di=new Date(tm.slice(0,10)+"T12:00:00");
   $("#wmtime").textContent = di.toLocaleDateString("es-AR",{weekday:"short",day:"numeric",month:"numeric"})+" · "+tm.slice(11,13)+" h";
   buildField(); startAnim();
+  // el viento medido (📡) sólo se muestra en la hora actual
+  const isNow = tm.slice(0,13)===nowLocal().slice(0,13);
+  (WM.mk||[]).forEach(m=>{ const el=m.getElement(); if(el) el.style.display=isNow?"":"none"; });
 }
 // ---- dibujo: fondo de colores + líneas animadas ----
 function buildField(){
