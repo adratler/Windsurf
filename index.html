@@ -433,26 +433,55 @@ function logWGObs(){
     if(add){ log.sort((a,b)=>a.t-b.t); store.set(key, log.slice(-3000)); }
   });
 }
+// Corrección prudente: en nudos (no en %), por rango de viento pronosticado; exige muchos datos de varios días
+const CAL_NEED_N = 60, CAL_NEED_DAYS = 5, CAL_MAX_UP = 10, CAL_MAX_DOWN = 6;
+const CAL_BINS = [[0,6],[6,12],[12,18],[18,99]];   // rangos de viento pronosticado (kn)
+function calDelta(S, fkey, okey){
+  // diferencia mediana (medido − pronosticado) para cada rango; si un rango tiene pocos datos, usa la general
+  const all = median(S.map(h=>h[okey]-h[fkey]));
+  const bins = CAL_BINS.map(([lo,hi])=>{ const ss=S.filter(h=>h[fkey]>=lo && h[fkey]<hi); return {c:(lo+Math.min(hi,26))/2, d: ss.length>=10 ? median(ss.map(h=>h[okey]-h[fkey])) : all, n:ss.length}; });
+  const at = f => {   // interpolación entre los centros de los rangos
+    if(f<=bins[0].c) return bins[0].d; if(f>=bins.at(-1).c) return bins.at(-1).d;
+    for(let i=0;i<bins.length-1;i++) if(f<=bins[i+1].c){ const t=(f-bins[i].c)/(bins[i+1].c-bins[i].c); return bins[i].d+(bins[i+1].d-bins[i].d)*t; }
+    return all;
+  };
+  return {all, bins, at};
+}
 function applyCalibrationWG(wr, code){
-  const S = store.get("fccal_"+code+"_"+state.model,[]).filter(h=>h.fs>=4);
-  const info = {n:S.length, need:30, key:"fc", applied:false, sectors:{}};
+  const S = store.get("fccal_"+code+"_"+state.model,[]);
+  const nDays = new Set(S.map(h=>new Date((h.t-10800)*1000).toISOString().slice(0,10))).size;
+  const info = {n:S.length, days:nDays, need:CAL_NEED_N, needDays:CAL_NEED_DAYS, key:"kn", applied:false, sectors:{}};
   if(!state.calibOn){ info.off=true; return info; }
-  if(S.length < info.need) return info;
-  const clamp = f => Math.max(0.6, Math.min(2.5, f));
-  const all = median(S.map(h=>h.os/h.fs)), allG = median(S.filter(h=>h.fg>=6).map(h=>h.og/h.fg)) || all;
-  const bySect = {};
-  for(let k=0;k<8;k++){ const ss=S.filter(h=>SECT(h.fd)===k); if(ss.length>=15){ const gg=ss.filter(h=>h.fg>=6); bySect[k]={f:median(ss.map(h=>h.os/h.fs)), g:gg.length>=10?median(gg.map(h=>h.og/h.fg)):null, n:ss.length}; } }
-  const fS = d => clamp(bySect[SECT(d)] ? bySect[SECT(d)].f : all);
-  const fG = d => clamp(bySect[SECT(d)] && bySect[SECT(d)].g ? bySect[SECT(d)].g : allG);
-  const H = wr.hourly, lim = Infinity;
-  H.wind_speed_10m = H.wind_speed_10m.map((v,i)=>{ if(i>lim) return v; const f=fS(H.wind_direction_10m[i]); return Math.abs(f-1)<0.1 ? v : v*f; });
-  H.wind_gusts_10m = H.wind_gusts_10m.map((v,i)=>{ if(i>lim) return v; const f=fG(H.wind_direction_10m[i]); const g=Math.abs(f-1)<0.1 ? v : v*f; return Math.max(g, H.wind_speed_10m[i]); });
-  info.applied = true; info.all = clamp(all); info.sectors = bySect;
+  if(S.length < CAL_NEED_N || nDays < CAL_NEED_DAYS) return info;
+  const W = calDelta(S,"fs","os"), G = calDelta(S,"fg","og");
+  // ajuste extra por dirección, sólo si esa dirección tiene muchos datos de varios días
+  const sectAdj = {};
+  for(let k=0;k<8;k++){
+    const ss=S.filter(h=>SECT(h.fd)===k), dd=new Set(ss.map(h=>new Date((h.t-10800)*1000).toISOString().slice(0,10))).size;
+    if(ss.length>=30 && dd>=4){ const r=median(ss.map(h=>(h.os-h.fs)-W.at(h.fs))); sectAdj[k]=r; info.sectors[k]={d:W.all+r, n:ss.length}; }
+  }
+  const clamp = d => Math.max(-CAL_MAX_DOWN, Math.min(CAL_MAX_UP, d));
+  const H = wr.hourly;
+  H.wind_speed_10m = H.wind_speed_10m.map((v,i)=>{ if(v==null) return v;
+    const d = clamp(W.at(v) + (sectAdj[SECT(H.wind_direction_10m[i])]||0));
+    return Math.max(0, v + d * Math.min(1, v/3));   // con calma pronosticada casi no se toca
+  });
+  H.wind_gusts_10m = H.wind_gusts_10m.map((v,i)=>{ if(v==null) return v;
+    const g = Math.max(0, v + clamp(G.at(v)) * Math.min(1, v/3));
+    return Math.max(g, H.wind_speed_10m[i]);
+  });
+  info.applied = true; info.all = W.all; info.gall = G.all;
   return info;
 }
 function calibText(c){
   if(!c) return "";
   if(c.off) return "Corrección local desactivada (se activa en ⚙︎).";
+  if(c.key==="kn"){
+    if(!c.applied) return `Aprendiendo del aeropuerto: ${c.n} mediciones de ${c.days} ${c.days===1?"día":"días"}. Empieza a corregir con ${c.need} mediciones de al menos ${c.needDays} días distintos.`;
+    const f = d => `${d>=0?"se queda corto":"se pasa"} ${Math.abs(d).toFixed(0)} kn`;
+    const parts = Object.entries(c.sectors).sort((a,b)=>b[1].n-a[1].n).slice(0,2).map(([k,v])=>`con viento del ${SECT_ES[k]} ${f(v.d)}`);
+    return `Pronóstico corregido con ${c.n} mediciones de ${c.days} días. En general el modelo ${f(c.all)} en el viento y ${f(c.gall)} en las ráfagas${parts.length?"; "+parts.join(", "):""}.`;
+  }
   if(!c.applied) return `Aprendiendo del aeropuerto: ${c.n} de ${c.need} mediciones para empezar a corregir el pronóstico.`;
   const parts = Object.entries(c.sectors).sort((a,b)=>b[1].n-a[1].n).slice(0,3)
     .map(([k,v])=>{ const pct=Math.round((v.f-1)*100); return `con viento del ${SECT_ES[k]} ${pct>=0?"se queda corto":"se pasa"} un ${Math.abs(pct)} %`; });
